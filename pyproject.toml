@@ -11,6 +11,7 @@ dependencies = [
     "torch",
     "torchvision",
     "ipykernel>=7.2.0",
+    "jupyter-console[cu130]>=6.6.3",
 ]
 
 

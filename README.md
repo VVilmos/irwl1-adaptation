@@ -9,7 +9,7 @@
 ## Phase 2: Gradual Pruning
   - Refine pruning method by iteratively prune only 20-10% of weights
   - Introduce warm-up at the beginnig, recovery phase after pruning step
-  - Does gradually decreasing this pruning rate help?
+  - Does gradually decreasing the pruning rate help?
   - Tuning the length of warm-up phase
 
 ## Phase 3: Update Interval tuning
