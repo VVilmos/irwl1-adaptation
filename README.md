@@ -3,11 +3,12 @@
 ## Phase 1: Batch Normalization
 
   - How do training speed and test accuracy change when applying batch normalization on every hidden layer of LeNet-5?
-  - How does batch normalization impact the sparsity-accuracy curve corresponding to l1/irwl1 regularization?
-  - How can the scale parameter of batchnorm be used for structured pruning (i.e. network slimming)?
+     - Test Accuracy gain ~ +0.2%
+  - How does batch normalization impact the sparsity-accuracy curve corresponding to l1/irwl1 regularization? (after Phase 2.1)
+  - How can the scale parameter of batchnorm be used for structured pruning (i.e. network slimming)? (after Phase 2.1)
 
 ## Phase 2: Gradual Pruning
-  - Refine pruning method by iteratively prune only 20-10% of weights
+  - Refine pruning method by iteratively prune only 20-10% of weights; could compress_ratio be DYNAMIC??
   - Introduce warm-up at the beginnig, recovery phase after pruning step
   - Does gradually decreasing the pruning rate help?
   - Tuning the length of warm-up phase

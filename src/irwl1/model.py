@@ -1,7 +1,6 @@
 import torch
 import torchvision
 import torch.nn as nn
-from irwl1.config import BATCH_SIZE
 
 class LeNet(torch.nn.Module):
 
