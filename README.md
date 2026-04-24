@@ -8,14 +8,13 @@
   - How can the scale parameter of batchnorm be used for structured pruning (i.e. network slimming)? (after Phase 2.1)
 
 ## Phase 2: Gradual Pruning
-  - Refine pruning method by iteratively prune only 20-10% of weights; could compress_ratio be DYNAMIC??
-  - Introduce warm-up at the beginnig, recovery phase after pruning step
-  - Does gradually decreasing the pruning rate help?
-  - Tuning the length of warm-up phase
+  1. Refine pruning method by iteratively prune only 20-10% of weights
+  2. Introduce warm-up at the beginnig, recovery phase after pruning step (tuning their length)
+  3. Does gradually decreasing the pruning rate help? (HOW??) 
 
 ## Phase 3: Update Interval tuning
-  - Define 1D metric out of sparsity-accuracy curve to tune frequency of penalty updates using Optuna
+  1.  Define 1D metric out of sparsity-accuracy curve to tune frequency of penalty updates using Optuna
+  - - Problem: to reach 95%, takes about **20 minutes**
 
 ## Phase 4: Weight re-initialization
-  - After the pruning phase, re-initialize the remaining weights
-  - Measure its impact on the sparsity-accuracy curve
+  1. After the pruning phase, re-initialize the remaining weights

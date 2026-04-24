@@ -1,5 +1,4 @@
 import torch
-import torchvision
 import torch.nn as nn
 
 class LeNet(torch.nn.Module):
@@ -8,8 +7,8 @@ class LeNet(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels = 1, out_channels=6, kernel_size=3, padding='same', bias=False)
-        self.bn1 = nn.BatchNorm2d(num_features=6)
         self.relu = nn.ReLU()
+        self.bn1 = nn.BatchNorm2d(num_features=6)
         self.maxpool = nn.MaxPool2d(kernel_size = 2, stride=2)
 
         self.conv2 = nn.Conv2d(in_channels=6, out_channels=16, kernel_size=3, bias=False)
@@ -27,22 +26,22 @@ class LeNet(torch.nn.Module):
         self.apply(self._threshold_init)
 
     def _weight_init(self, layer):
-        if type(layer) in [nn.Linear, nn.Conv2d]:
-            nn.init.xavier_uniform_(layer.weight)
+        if isinstance(layer, (nn.Linear, nn.Conv2d)):
+            nn.init.kaiming_uniform_(layer.weight, nonlinearity="relu")
             if layer.bias is not None:
                 nn.init.constant_(layer.bias, 0)
 
     def _threshold_init(self, layer):
-        if type(layer) in [nn.Conv2d]:
+        if isinstance(layer, nn.Conv2d):
             layer.hard_threshold = None
 
 
     def forward(self, x):
-        x = self.maxpool(self.relu(self.bn1(self.conv1(x))))
-        x = self.maxpool(self.relu(self.bn2(self.conv2(x))))
+        x = self.maxpool(self.bn1(self.relu(self.conv1(x)))) # 
+        x = self.maxpool(self.bn2(self.relu(self.conv2(x))))
         x = self.flatten(x)
-        x = self.relu(self.bn3(self.lin1(x)))
-        x = self.relu(self.bn4(self.lin2(x)))
+        x = self.bn3(self.relu(self.lin1(x)))
+        x = self.bn4(self.relu(self.lin2(x)))
         y = self.out(x)
         return y
 
@@ -68,8 +67,8 @@ class oriLeNet(torch.nn.Module):
         self.apply(self._threshold_init)
 
     def _weight_init(self, layer):
-        if type(layer) in [nn.Linear, nn.Conv2d]:
-            nn.init.xavier_uniform_(layer.weight)
+        if isinstance(layer, (nn.Linear, nn.Conv2d)):
+            nn.init.kaiming_uniform_(layer.weight, nonlinearity="relu")
             if layer.bias is not None:
                 nn.init.constant_(layer.bias, 0)
 

@@ -13,6 +13,8 @@ dependencies = [
     "ipykernel>=7.2.0",
     "jupyter-console[cu130]>=6.6.3",
     "pandas[cu130]>=3.0.1",
+    "scikit-learn>=1.8.0",
+    "optuna>=4.8.0",
 ]
 
 

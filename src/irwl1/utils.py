@@ -6,11 +6,13 @@ import irwl1.config as config
 from irwl1.regularization import calculate_L1_norm, calculate_WL1_norm, L1_penalty_update
 import pandas
 
-def calculate_sparsity(model, threshold=1e-5):
+def calculate_sparsity(model):
+    threshold = config.WEIGHT_PRUNING_THRESHOLD
     num_total_weights, num_zero_weights = 0, 0 
     for name, layer in model.named_modules():
-        num_total_weights += torch.numel(layer.weight) 
-        num_zero_weights += torch.sum(torch.abs(layer.weight) < threshold).item()
+        if type(layer) in [nn.Conv2d, nn.Linear]:
+            num_total_weights += torch.numel(layer.weight) 
+            num_zero_weights += torch.sum(torch.abs(layer.weight) < threshold).item()
 
     return num_zero_weights / num_total_weights  * 100
 
@@ -20,10 +22,10 @@ def calculate_real_sparsity(model):
         if type(layer) in [nn.Conv2d, nn.Linear]:
             num_total_weights += torch.numel(layer.weight)
             num_nonzero_weights += layer.weight.nonzero().shape[0] 
-        
     return (num_total_weights - num_nonzero_weights) / num_total_weights  * 100
 
-def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_tensor, val_label_tensor, is_new_run=True, run=None, run_name="default"):
+
+def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_tensor, val_label_tensor, apply_reg=False, is_new_run=True, run=None, run_name="default"):
     optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
     criterion = torch.nn.CrossEntropyLoss()
 
@@ -40,7 +42,9 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
             run = wandb.init(project = f"pre_pruning_tests", name=run_name)
 
     train_size = train_image_tensor.shape[0]
-    num_batches = round(train_size/config.BATCH_SIZE)
+    total_num_batches = round(train_size/config.BATCH_SIZE)
+
+    update_interval = round(total_num_batches / config.UPDATE_PER_EPOCH)  # becomes update_per_batch
 
     for epoch in range(config.EPOCHS):
         model.train()
@@ -55,30 +59,31 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
             outputs = model(train_image_tensor[i:i+config.BATCH_SIZE])
             data_loss = criterion(input=outputs, target=train_label_tensor[i:i+config.BATCH_SIZE])
 
-            match(config.REG_TYPE):
-                case "WL1":
-                    reg_loss = config.LAMBDA_REG * calculate_WL1_norm(model)
-                    loss = data_loss + reg_loss
-                case "L1":
-                    reg_loss = config.LAMBDA_REG * calculate_L1_norm(model)
-                    loss = data_loss + reg_loss
-                case "L0":
-                    loss = data_loss
-                case "None":
-                    loss = data_loss
+            if (apply_reg):
+                match(config.REG_TYPE):
+                    case "WL1":
+                        reg_loss = config.LAMBDA_REG * calculate_WL1_norm(model)
+                        loss = data_loss + reg_loss
+                    case "L1":
+                        reg_loss = config.LAMBDA_REG * calculate_L1_norm(model)
+                        loss = data_loss + reg_loss
+                    case "L0":
+                        loss = data_loss
+                    case "None":
+                        loss = data_loss
+            else:
+                loss = data_loss
 
             loss.backward()
             total_train_loss += loss.item()
             optimizer.step()
 
-            match(config.REG_TYPE):
-                case "WL1":
-                    if (i % config.K == config.K-1):
-                        model.apply(L1_penalty_update)
+            if (apply_reg) & (config.REG_TYPE == "WL1") & (i % update_interval == update_interval-1): # update WL1 penalty every "update_interval" batches
+                L1_penalty_update(model)
 
-        avg_train_loss = total_train_loss / num_batches
+        avg_train_loss = total_train_loss / total_num_batches
         current_val_loss, val_acc = validate_in_memory(model, val_image_tensor, val_label_tensor)
-        current_sparsity = calculate_real_sparsity(model)
+        current_sparsity = calculate_sparsity(model)
 
         run.log({"train/loss": avg_train_loss, "val/loss": current_val_loss, "val/acc": val_acc, "train/sparsity": current_sparsity})
 
@@ -151,10 +156,8 @@ def init_mask(model):
             with torch.no_grad():
                 layer.register_buffer("mask", torch.ones(weight.shape, dtype=torch.float32, device=weight.device))
 
-def prune_with_mask(model, compress_ratio=None):
-    if compress_ratio is None:
-        compress_ratio = config.COMPRESS_RATIO
-
+def prune_with_mask(model):
+    threshold = config.WEIGHT_PRUNING_THRESHOLD
     for name, layer in model.named_modules():
         if type(layer) == nn.Conv2d:
             weight = layer.weight
@@ -202,11 +205,11 @@ def prune_with_mask(model, compress_ratio=None):
                 layer.mask.copy_((active & (weight_amplitude >= threshold)).to(layer.mask.dtype))
                 weight.mul_(layer.mask)
 
-def save_sparacc_curve(spar_cp, acc_cp):
+def save_sparacc_curve(spar_cp, acc_cp, path=config.CURVE_PATH):
     num_records = len(spar_cp)
-    df = pandas.read_csv(config.CURVE_PATH, index_col=False)
+    df = pandas.read_csv(path, index_col=False)
     row = {"reg_type": [config.REG_TYPE]*num_records, "mode": [config.MODE]*num_records, "sparsity": spar_cp, "accuracy": acc_cp, 
            "lambda": [config.LAMBDA_REG]*num_records, "compress_ratio": [config.COMPRESS_RATIO]*num_records, "K": [config.K]*num_records, "epsilon": [config.EPSILON]*num_records}
     df = pandas.concat([df, pandas.DataFrame(row)], ignore_index=True)
 
-    df.to_csv(config.CURVE_PATH, index=False)
+    df.to_csv(path, index=False)
