@@ -77,16 +77,16 @@ def L1_penalty_init(model):
           layer.penalty = torch.ones(layer.weight.shape, device=config.DEVICE, requires_grad=False)
 
 def L1_penalty_update(model):
-    for name, layer in model.named_modules():
+    with torch.no_grad():
+      for name, layer in model.named_modules():
         if type(layer)  == nn.Conv2d:
-          with torch.no_grad():
-            match(config.MODE):
-              case "weight-wise":
-                layer.penalty = 1 / (layer.weight.abs() + config.EPSILON)
-              case "kernel-wise":
-                layer.penalty = 1 / (layer.weight.pow(2).sum(dim=(2, 3)).sqrt() + config.EPSILON)
-              case "channel-wise":
-                layer.penalty = 1 / (layer.weight.pow(2).sum(dim=(1, 2, 3)).sqrt() + config.EPSILON)
+          match(config.MODE):
+            case "weight-wise":
+              layer.penalty = 1 / (layer.weight.abs() + config.EPSILON)
+            case "kernel-wise":
+              layer.penalty = 1 / (layer.weight.pow(2).sum(dim=(2, 3)).sqrt() + config.EPSILON)
+            case "channel-wise":
+              layer.penalty = 1 / (layer.weight.pow(2).sum(dim=(1, 2, 3)).sqrt() + config.EPSILON)
         elif (type(layer) == nn.Linear) and (name != "out"):
           layer.penalty = 1 / (layer.weight.abs() + config.EPSILON)
           if hasattr(layer, "mask"):

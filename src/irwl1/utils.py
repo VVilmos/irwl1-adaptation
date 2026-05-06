@@ -10,24 +10,17 @@ def calculate_sparsity(model):
     threshold = config.WEIGHT_PRUNING_THRESHOLD
     num_total_weights, num_zero_weights = 0, 0 
     for name, layer in model.named_modules():
-        if type(layer) in [nn.Conv2d, nn.Linear]:
+        if (type(layer) in [nn.Conv2d, nn.Linear]) and (name != "out"):
             num_total_weights += torch.numel(layer.weight) 
             num_zero_weights += torch.sum(torch.abs(layer.weight) < threshold).item()
 
     return num_zero_weights / num_total_weights  * 100
 
-def calculate_real_sparsity(model):
-    num_total_weights, num_nonzero_weights = 0, 0 
-    for name, layer in model.named_modules():
-        if type(layer) in [nn.Conv2d, nn.Linear]:
-            num_total_weights += torch.numel(layer.weight)
-            num_nonzero_weights += layer.weight.nonzero().shape[0] 
-    return (num_total_weights - num_nonzero_weights) / num_total_weights  * 100
 
-
-def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_tensor, val_label_tensor, apply_reg=False, is_new_run=True, run=None, run_name="default"):
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_tensor, val_label_tensor, optimizer=None, apply_reg=False, is_new_run=True, run=None, run_name="default"):
     criterion = torch.nn.CrossEntropyLoss()
+    if optimizer is None:
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
 
     best_val_loss = float('inf') 
     current_patience = config.PATIENCE
@@ -37,7 +30,7 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
         if config.REG_TYPE == "L1":
             run = wandb.init(project = f"pruning_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_lambda{round(config.LAMBDA_REG, 3)}")
         elif config.REG_TYPE == "WL1":
-            run = wandb.init(project = f"pruning_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_lambda{config.LAMBDA_REG}_K{config.K}_eps{config.EPSILON}")
+            run = wandb.init(project = f"global_pruning_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_threshold{config.WEIGHT_PRUNING_THRESHOLD}_updatefreq{config.UPDATE_PER_EPOCH}_eps{config.EPSILON}")
         elif config.REG_TYPE == "None":
             run = wandb.init(project = f"pre_pruning_tests", name=run_name)
 
@@ -55,7 +48,6 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
         train_label_tensor = train_label_tensor[indices]
 
         for i in range(0, train_size, config.BATCH_SIZE):
-            optimizer.zero_grad(set_to_none=True)
             outputs = model(train_image_tensor[i:i+config.BATCH_SIZE])
             data_loss = criterion(input=outputs, target=train_label_tensor[i:i+config.BATCH_SIZE])
 
@@ -74,8 +66,9 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
             else:
                 loss = data_loss
 
+            optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            total_train_loss += loss.item()
+            total_train_loss += data_loss.item()
             optimizer.step()
 
             if (apply_reg) & (config.REG_TYPE == "WL1") & (i % update_interval == update_interval-1): # update WL1 penalty every "update_interval" batches
@@ -99,7 +92,11 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
 
     if best_params is not None:
       model.load_state_dict(best_params)
-      
+
+    if apply_reg:
+        print(f"Ended reg_train phase after {epoch}")
+    else:
+        print(f"Ended recovery phase after {epoch}")
     return model, run
 
 
@@ -146,8 +143,12 @@ def init_mask(model):
                 match(config.MODE):
                     case "weight-wise":
                         layer.register_buffer("mask", torch.ones(weight.shape, dtype=torch.float32, device=weight.device))
+                        weight.register_hook(lambda grad, l=layer: grad * l.mask)  # hook to apply mask during backpropagation
+
                     case "kernel-wise":
                         layer.register_buffer("mask", torch.ones(weight.shape[:2], dtype=torch.float32, device=weight.device))
+                        weight.register_hook(lambda grad: grad * layer.mask[:, :, None, None])  # hook to apply mask during backpropagation
+
                     case "channel-wise":
                         layer.register_buffer("mask", torch.ones(weight.shape[0], dtype=torch.float32, device=weight.device))
 
@@ -155,8 +156,11 @@ def init_mask(model):
             weight = layer.weight
             with torch.no_grad():
                 layer.register_buffer("mask", torch.ones(weight.shape, dtype=torch.float32, device=weight.device))
+                weight.register_hook(lambda grad, l=layer: grad * l.mask)   
 
-def prune_with_mask(model):
+
+# using global threshold for pruning
+def global_pruning(model, masking=False):
     threshold = config.WEIGHT_PRUNING_THRESHOLD
     for name, layer in model.named_modules():
         if type(layer) == nn.Conv2d:
@@ -164,52 +168,32 @@ def prune_with_mask(model):
             with torch.no_grad():
                 match(config.MODE):
                     case "weight-wise":
+
                         weight_amplitude = torch.abs(weight)
-                        active = layer.mask > 0
-                        active_values = weight_amplitude[active]
-                        if active_values.numel() == 0:
-                            continue
-                        threshold = torch.quantile(active_values, q=compress_ratio)
-                        layer.mask.copy_((active & (weight_amplitude >= threshold)).to(layer.mask.dtype))
+                        weight = weight * (weight_amplitude >= threshold).to(weight.dtype)
 
-                        weight.mul_(layer.mask)
+                        if masking:
+                            layer.mask = (weight_amplitude >= threshold).to(weight.dtype)
+
                     case "kernel-wise":
-                        kernel_amplitude = weight.pow(2).sum(dim=(2, 3)).sqrt()
-                        active = layer.mask > 0
-                        active_values = kernel_amplitude[active]
-                        if active_values.numel() == 0:
-                            continue
-                        threshold = torch.quantile(active_values, q=compress_ratio)
-                        layer.mask.copy_((active & (kernel_amplitude >= threshold)).to(layer.mask.dtype))
-
-                        weight.mul_(layer.mask[:, :, None, None])
+                        pass
                     case "channel-wise":
-                        channel_amplitude = weight.pow(2).sum(dim=(1, 2, 3)).sqrt()
-                        active = layer.mask > 0
-                        active_values = channel_amplitude[active]
-                        if active_values.numel() == 0:
-                            continue
-                        threshold = torch.quantile(active_values, q=compress_ratio)
-                        layer.mask.copy_((active & (channel_amplitude >= threshold)).to(layer.mask.dtype))
+                        pass
 
-                        weight.mul_(layer.mask[:, None, None, None])
         elif (type(layer) == nn.Linear) and (name != "out"):
             weight = layer.weight
             with torch.no_grad():
                 weight_amplitude = torch.abs(weight)
-                active = layer.mask > 0
-                active_values = weight_amplitude[active]
-                if active_values.numel() == 0:
-                    continue
-                threshold = torch.quantile(active_values, q=compress_ratio)
-                layer.mask.copy_((active & (weight_amplitude >= threshold)).to(layer.mask.dtype))
-                weight.mul_(layer.mask)
+                weight = weight * (weight_amplitude >= threshold).to(weight.dtype)
+
+                if masking:
+                    layer.mask = (weight_amplitude >= threshold).to(weight.dtype)
 
 def save_sparacc_curve(spar_cp, acc_cp, path=config.CURVE_PATH):
     num_records = len(spar_cp)
     df = pandas.read_csv(path, index_col=False)
     row = {"reg_type": [config.REG_TYPE]*num_records, "mode": [config.MODE]*num_records, "sparsity": spar_cp, "accuracy": acc_cp, 
-           "lambda": [config.LAMBDA_REG]*num_records, "compress_ratio": [config.COMPRESS_RATIO]*num_records, "K": [config.K]*num_records, "epsilon": [config.EPSILON]*num_records}
+           "lambda": [config.LAMBDA_REG]*num_records, "threshold": [config.WEIGHT_PRUNING_THRESHOLD]*num_records, "update_per_epoch": [config.UPDATE_PER_EPOCH]*num_records, "epsilon": [config.EPSILON]*num_records}
     df = pandas.concat([df, pandas.DataFrame(row)], ignore_index=True)
 
     df.to_csv(path, index=False)
