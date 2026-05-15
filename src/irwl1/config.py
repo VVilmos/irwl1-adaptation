@@ -11,7 +11,7 @@ LAMBDA_REG = 0.003
 # Pruning
 REG_TYPE = "L1"
 MODE = "weight-wise"
-WEIGHT_PRUNING_THRESHOLD = 1e-4 # should be a function of EPSILON
+WEIGHT_PRUNING_THRESHOLD = 1e-3 # should be a function of EPSILON
 #KERNEL_PRUNING_THRESHOLD = 0.00001* kernel_size # should be a function of EPSILON
 #CHANNEL_PRUNING_THRESHOLD = 0.00001 *channel_size# should be a function of EPSILON
 
@@ -27,3 +27,7 @@ CURVE_PATH = "results/"
 A = 100 # number of epochs until convergence (with reg)
 B = 3 # number of epochs
 C = 2# number of epochs
+
+
+# admin
+MODEL = "ResNet20"

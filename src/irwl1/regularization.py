@@ -2,6 +2,10 @@ import torch
 import torch.nn as nn
 import irwl1.config as config
 
+
+def _should_skip_module(name):
+  return any(part in {"out", "fc", "downsample"} for part in name.split("."))
+
 # L0 proximal operator
 def prox_op_layerwise(layer):
   if type(layer) in [nn.Conv2d]: # TODO: update with linear layers
@@ -28,6 +32,9 @@ def prox_op_layerwise(layer):
 def calculate_L1_norm(model):
   l1_norm = 0
   for name, layer in model.named_modules():
+    if _should_skip_module(name):
+      continue
+
     if type(layer) in [nn.Conv2d]:
       match(config.MODE):
         case "weight-wise":
@@ -51,7 +58,7 @@ def calculate_L1_norm(model):
             l1_norm += channel_amplitudes[active].sum()
           else:
             l1_norm += channel_amplitudes.sum()
-    elif (type(layer) == nn.Linear) and (name != 'out'):
+    elif type(layer) == nn.Linear:
       weight_abs = layer.weight.abs()
       if hasattr(layer, "mask"):
         active = layer.mask > 0
@@ -65,6 +72,9 @@ def calculate_L1_norm(model):
 # Reweighted L1
 def L1_penalty_init(model):
     for name, layer in model.named_modules():
+        if _should_skip_module(name):
+            continue
+
         if type(layer) == nn.Conv2d:
             match(config.MODE):
               case "weight-wise":
@@ -73,12 +83,15 @@ def L1_penalty_init(model):
                 layer.penalty = torch.ones(layer.weight.shape[:2], device=config.DEVICE, requires_grad=False) # every kernel
               case "channel-wise":
                 layer.penalty = torch.ones(layer.weight.shape[0], device=config.DEVICE,requires_grad=False)
-        elif (type(layer) == nn.Linear) and (name != "out"):
+        elif type(layer) == nn.Linear:
           layer.penalty = torch.ones(layer.weight.shape, device=config.DEVICE, requires_grad=False)
 
 def L1_penalty_update(model):
     with torch.no_grad():
       for name, layer in model.named_modules():
+        if _should_skip_module(name):
+            continue
+
         if type(layer)  == nn.Conv2d:
           match(config.MODE):
             case "weight-wise":
@@ -87,7 +100,9 @@ def L1_penalty_update(model):
               layer.penalty = 1 / (layer.weight.pow(2).sum(dim=(2, 3)).sqrt() + config.EPSILON)
             case "channel-wise":
               layer.penalty = 1 / (layer.weight.pow(2).sum(dim=(1, 2, 3)).sqrt() + config.EPSILON)
-        elif (type(layer) == nn.Linear) and (name != "out"):
+          if hasattr(layer, "mask"):
+            layer.penalty = layer.penalty * (layer.mask > 0)
+        elif type(layer) == nn.Linear:
           layer.penalty = 1 / (layer.weight.abs() + config.EPSILON)
           if hasattr(layer, "mask"):
             layer.penalty = layer.penalty * (layer.mask > 0)
@@ -95,6 +110,9 @@ def L1_penalty_update(model):
 def calculate_WL1_norm(model):
   l1_norm = 0
   for name, layer in model.named_modules():
+    if _should_skip_module(name):
+      continue
+
     if type(layer)  == nn.Conv2d:
         match(config.MODE):
           case "weight-wise":
@@ -118,7 +136,7 @@ def calculate_WL1_norm(model):
               l1_norm += wl1[active].sum()
             else:
               l1_norm += wl1.sum()
-    elif (type(layer) == nn.Linear) and (name != "out"):
+    elif type(layer) == nn.Linear:
       wl1 = layer.penalty * layer.weight.abs()
       if hasattr(layer, "mask"):
         active = layer.mask > 0
