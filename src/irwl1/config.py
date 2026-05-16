@@ -24,10 +24,11 @@ DELTA = 0.000001 # when calculating (why necessary under sqrt)
 CURVE_PATH = "results/"
 
 # warm-up and recovery phase lengths
-A = 100 # number of epochs until convergence (with reg)
-B = 3 # number of epochs
-C = 2# number of epochs
+NUM_REG_EPOCHS = 100 # number of epochs until convergence (with reg)
+NUM_RECOVERY_EPOCHS = 3 # number of epochs
+NUM_PRETRAIN_EPOCHS = 2# number of epochs
 
 
 # admin
 MODEL = "ResNet20"
+WANDB_MODE = "online"

@@ -1,0 +1,2 @@
+reg_type,mode,sparsity,accuracy,lambda,threshold,update_per_epoch,epsilon
+WL1,dummy,76.4509847974238,87.07,0.003,0.001,2.0,1e-05

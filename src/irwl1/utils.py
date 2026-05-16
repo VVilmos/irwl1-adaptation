@@ -6,6 +6,7 @@ from copy import deepcopy
 import pandas
 
 import irwl1.config as config
+from irwl1.robust import deepfool_norm, deepfool_norm_in_memory
 from irwl1.regularization import calculate_L1_norm, calculate_WL1_norm, L1_penalty_update
 
 
@@ -59,16 +60,16 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
 
     if is_new_run:
         if config.REG_TYPE == "L1":
-            run = wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_lambda{round(config.LAMBDA_REG, 3)}")
+            run = wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_lambda{round(config.LAMBDA_REG, 3)}", mode=config.WANDB_MODE)
         elif config.REG_TYPE == "WL1":
-            run = wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_threshold{config.WEIGHT_PRUNING_THRESHOLD}_updatefreq{config.UPDATE_PER_EPOCH}_eps{config.EPSILON}")
+            run = wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_threshold{config.WEIGHT_PRUNING_THRESHOLD}_updatefreq{config.UPDATE_PER_EPOCH}_eps{config.EPSILON}", mode=config.WANDB_MODE)
         elif config.REG_TYPE == "None":
-            run = wandb.init(project=f"pre_pruning_tests_{config.MODEL}", name=run_name)
+            run = wandb.init(project=f"pre_pruning_tests_{config.MODEL}", name=run_name, mode=config.WANDB_MODE)
 
     train_size = train_image_tensor.shape[0]
     total_num_batches = round(train_size / config.BATCH_SIZE)
 
-    update_interval = round(total_num_batches / config.UPDATE_PER_EPOCH)
+    update_interval = max(1, total_num_batches / config.UPDATE_PER_EPOCH)
 
     for epoch in range(config.EPOCHS):
         model.train()
@@ -102,11 +103,93 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
             total_train_loss += data_loss.item()
             optimizer.step()
 
-            if apply_reg and config.REG_TYPE == "WL1" and (i % update_interval == update_interval - 1):
+            if apply_reg and config.REG_TYPE == "WL1" and ((i/config.BATCH_SIZE) % update_interval == update_interval - 1):
                 L1_penalty_update(model)
 
         avg_train_loss = total_train_loss / total_num_batches
         current_val_loss, val_acc = validate_in_memory(model, val_image_tensor, val_label_tensor)
+        current_thresholded_sparsity = calculate_thresholded_sparsity(model)
+        current_real_sparsity = calculate_real_sparsity(model)
+
+        run.log({"train/loss": avg_train_loss, "val/loss": current_val_loss, "val/acc": val_acc,  "train/thresholded_sparsity": current_thresholded_sparsity, "train/real_sparsity": current_real_sparsity})
+
+        if current_val_loss < best_val_loss:
+            best_val_loss = current_val_loss
+            best_params = deepcopy(model.state_dict())
+            current_patience = config.PATIENCE
+        else:
+            current_patience -= 1
+
+        if current_patience == 0:
+            break
+
+    if best_params is not None:
+        model.load_state_dict(best_params)
+
+    if apply_reg:
+        print(f"Ended reg_train phase after {epoch}")
+    else:
+        print(f"Ended recovery phase after {epoch}")
+
+    return model, run
+
+
+def train(model, train_loader, val_loader, optimizer=None, apply_reg=False, is_new_run=True, run=None, run_name="default"):
+    criterion = torch.nn.CrossEntropyLoss()
+    if optimizer is None:
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+
+    best_val_loss = float('inf')
+    current_patience = config.PATIENCE
+    best_params = None
+
+    if is_new_run:
+        if config.REG_TYPE == "L1":
+            run = wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_lambda{round(config.LAMBDA_REG, 3)}", mode=config.WANDB_MODE)
+        elif config.REG_TYPE == "WL1":
+            run = wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_threshold{config.WEIGHT_PRUNING_THRESHOLD}_updatefreq{config.UPDATE_PER_EPOCH}_eps{config.EPSILON}", mode=config.WANDB_MODE)
+        elif config.REG_TYPE == "None":
+            run = wandb.init(project=f"pre_pruning_tests_{config.MODEL}", name=run_name, mode=config.WANDB_MODE)
+
+    total_num_batches = len(train_loader)
+    update_interval = max(1, round(total_num_batches / config.UPDATE_PER_EPOCH))
+
+    for epoch in range(config.EPOCHS):
+        model.train()
+        total_train_loss = 0
+
+        for batch_index, (inputs, targets) in enumerate(train_loader):
+            inputs = inputs.to(config.DEVICE)
+            targets = targets.to(config.DEVICE)
+
+            outputs = model(inputs)
+            data_loss = criterion(input=outputs, target=targets)
+
+            if apply_reg:
+                match(config.REG_TYPE):
+                    case "WL1":
+                        reg_loss = config.LAMBDA_REG * calculate_WL1_norm(model)
+                        loss = data_loss + reg_loss
+                    case "L1":
+                        reg_loss = config.LAMBDA_REG * calculate_L1_norm(model)
+                        loss = data_loss + reg_loss
+                    case "L0":
+                        loss = data_loss
+                    case "None":
+                        loss = data_loss
+            else:
+                loss = data_loss
+
+            optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            total_train_loss += data_loss.item()
+            optimizer.step()
+
+            if apply_reg and config.REG_TYPE == "WL1" and ((batch_index + 1) % update_interval == 0):
+                L1_penalty_update(model)
+
+        avg_train_loss = total_train_loss / total_num_batches
+        current_val_loss, val_acc = validate(model, val_loader)
         current_thresholded_sparsity = calculate_thresholded_sparsity(model)
         current_real_sparsity = calculate_real_sparsity(model)
 
@@ -133,6 +216,33 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
     return model, run
 
 
+def _evaluate_loader(model, data_loader):
+    model.eval()
+    criterion = torch.nn.CrossEntropyLoss()
+    total_loss = 0
+    total_correct = 0
+    total_examples = 0
+    num_batches = len(data_loader)
+
+    with torch.no_grad():
+        for inputs, targets in data_loader:
+            inputs = inputs.to(config.DEVICE)
+            targets = targets.to(config.DEVICE)
+
+            outputs = model(inputs)
+            loss = criterion(input=outputs, target=targets)
+            total_loss += loss.item()
+
+            _, predicted_classes = torch.max(outputs, 1)
+            total_correct += (predicted_classes == targets).sum().item()
+            total_examples += targets.shape[0]
+
+    avg_loss = total_loss / num_batches
+    accuracy = 100 * total_correct / total_examples
+
+    return avg_loss, accuracy
+
+
 def validate_in_memory(model, val_image_tensor, val_label_tensor):
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
@@ -151,6 +261,10 @@ def validate_in_memory(model, val_image_tensor, val_label_tensor):
     return avg_val_loss, val_acc
 
 
+def validate(model, val_loader):
+    return _evaluate_loader(model, val_loader)
+
+
 def test_in_memory(model, test_image_tensor, test_label_tensor):
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
@@ -167,6 +281,10 @@ def test_in_memory(model, test_image_tensor, test_label_tensor):
     test_acc = 100 * total_correct / total
 
     return avg_test_loss, test_acc
+
+
+def test(model, test_loader):
+    return _evaluate_loader(model, test_loader)
 
 
 def init_mask(model):
@@ -230,10 +348,10 @@ def global_pruning(model, masking=False):
                     layer.mask.copy_((weight_amplitude >= threshold).to(weight.dtype))
 
 
-def save_sparacc_curve(spar_cp, acc_cp, path=config.CURVE_PATH):
+def save_sparacc_curve(spar_cp, acc_cp, robust_cp, path=config.CURVE_PATH):
     num_records = len(spar_cp)
     df = pandas.read_csv(path, index_col=False)
-    row = {"reg_type": [config.REG_TYPE] * num_records, "mode": [config.MODE] * num_records, "sparsity": spar_cp, "accuracy": acc_cp,
+    row = {"model": config.MODEL, "reg_type": [config.REG_TYPE] * num_records, "mode": [config.MODE] * num_records, "sparsity": spar_cp, "accuracy": acc_cp, "p_norm": robust_cp,
            "lambda": [config.LAMBDA_REG] * num_records, "threshold": [config.WEIGHT_PRUNING_THRESHOLD] * num_records, "update_per_epoch": [config.UPDATE_PER_EPOCH] * num_records, "epsilon": [config.EPSILON] * num_records}
     df = pandas.concat([df, pandas.DataFrame(row)], ignore_index=True)
 
