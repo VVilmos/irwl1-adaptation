@@ -1,30 +1,20 @@
-import os
-import time
+from pathlib import Path
 
 import torch
 
-from irwl1.regularization import L1_penalty_init
-from irwl1.data import fetch_cifar10, fetch_cifar10_test_mini
 import irwl1.config as config
+from irwl1.data import fetch_cifar10
 from irwl1.model import ResNet20
-from irwl1.utils import train, init_mask, global_pruning, calculate_real_sparsity, save_sparacc_curve, test, save_cifar10c_row
-from irwl1.robust import deepfool_norm, evaluate_cifar10c_per_corruption, pgd_norm, fab_norm
-import pandas
-from pathlib import Path
+from irwl1.regularization import L1_penalty_init
+from irwl1.utils import calculate_real_sparsity, global_pruning, init_mask, train
 
 
-def main() -> None:
-	print("[SETUP] Loading data and model")
-	train_loader, val_loader, test_loader = fetch_cifar10()
-	mini_test_loader = fetch_cifar10_test_mini()
-	# we evaluate all corruptions under data/CIFAR-10-C using the per-corruption evaluator
-	cifar10c_root = "data/CIFAR-10-C"
+NUM_RUNS = 1
+SPARSITY_STEP = 5.0
+MAX_SPARSITY = 95.0
 
-	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-	model = ResNet20().to(device)
-	L1_penalty_init(model)
-	init_mask(model)
 
+def _configure_training() -> None:
 	config.WEIGHT_PRUNING_THRESHOLD = 1e-5
 	config.EPSILON = 1e-6
 	config.UPDATE_PER_EPOCH = 1
@@ -38,9 +28,39 @@ def main() -> None:
 	config.FAB_STEPS = 5
 	config.WEIGHT_DECAY = 0.0
 
-	print("[WARMUP] Training without regularization")
-	config.EPOCHS = config.NUM_PRETRAIN_EPOCHS
+
+def _build_model(device: torch.device) -> torch.nn.Module:
+	model = ResNet20().to(device)
+	L1_penalty_init(model)
+	init_mask(model)
+	return model
+
+
+def _save_checkpoint(output_dir: Path, checkpoint_index: int, sparsity: float, model: torch.nn.Module, phase: str) -> Path:
+	output_dir.mkdir(parents=True, exist_ok=True)
+	checkpoint_path = output_dir / f"checkpoint_{checkpoint_index:02d}_sparsity_{sparsity:.2f}.pth"
+	torch.save(
+		{
+			"model_state_dict": model.state_dict(),
+			"phase": phase,
+			"checkpoint_index": checkpoint_index,
+			"sparsity": sparsity,
+		},
+		checkpoint_path,
+	)
+	return checkpoint_path
+
+
+def _train_single_run(run_index: int, train_loader, val_loader, device: torch.device) -> None:
+	run_dir = Path("models") / f"run_{run_index:02d}"
+	run_dir.mkdir(parents=True, exist_ok=True)
+	print(f"[RUN {run_index + 1}/{NUM_RUNS}] Starting in {run_dir}")
+
+	model = _build_model(device)
 	optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+
+	# WARMUP
+	config.EPOCHS = config.NUM_PRETRAIN_EPOCHS
 	model, wandb_run = train(
 		model,
 		train_loader,
@@ -48,31 +68,18 @@ def main() -> None:
 		optimizer=optimizer,
 		apply_reg=False,
 		is_new_run=True,
-		run_name="iterL1",
+		run_name=f"iterL1_run_{run_index:02d}",
 		weight_decay=False,
 	)
 
-	spar = 0
-	_, acc = test(model, test_loader)
+	sparsity = calculate_real_sparsity(model)
+	_save_checkpoint(run_dir, 0, sparsity, model, "warmup")
+	previous_saved_sparsity = sparsity
+	checkpoint_index = 1
 
-	#corr_acc = evaluate_cifar10c_per_corruption(model, data_root=cifar10c_root, severity=3, batch_size=config.BATCH_SIZE, device=device)
-	fab_acc_val = fab_norm(model, mini_test_loader)
-	
+	while sparsity <= MAX_SPARSITY:
 
-	os.makedirs("models", exist_ok=True)
-	spar_cp, acc_cp, pgd_norm_cp, fab_acc_cp, corr_acc_cp = [], [], [], [], []
-	spar_cp.append(spar)
-	acc_cp.append(acc)
-	# corr_acc is a dict mapping corruption -> accuracy; save per-corruption results to a dedicated CSV
-	#per_corr_csv = "results/resnet20cifar10_corruptions.csv"
-	#save_cifar10c_row(spar, acc, corr_acc, path=per_corr_csv)
-	# do NOT compute mean of corruption accuracies; keep placeholder for legacy curve saving
-	#corr_acc_cp.append(None)
-	fab_acc_cp.append(fab_acc_val)
-
-	checkpoint_idx = 0
-	while spar <= 95:
-		print("[STEP] Regularization")
+		print(f"[RUN {run_index + 1}/{NUM_RUNS}] Regularization")
 		config.EPOCHS = config.NUM_REG_EPOCHS
 		model, wandb_run = train(
 			model,
@@ -81,18 +88,21 @@ def main() -> None:
 			optimizer=optimizer,
 			apply_reg=True,
 			is_new_run=False,
-			run_name="iterL1",
+			run_name=f"iterL1_run_{run_index:02d}",
 			run=wandb_run,
 			weight_decay=False,
 		)
 
-		print("[STEP] Pruning")
+
+
+
+		print(f"[RUN {run_index + 1}/{NUM_RUNS}] Pruning")
 		global_pruning(model, masking=True)
 
-		print("[STEP] Recovery")
+
+
+		print(f"[RUN {run_index + 1}/{NUM_RUNS}] Recovery")
 		config.EPOCHS = config.NUM_RECOVERY_EPOCHS
-		for param_group in optimizer.param_groups:
-			param_group["lr"] = 1 * config.LEARNING_RATE
 		optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
 		model, wandb_run = train(
 			model,
@@ -101,37 +111,39 @@ def main() -> None:
 			optimizer=optimizer,
 			apply_reg=False,
 			is_new_run=False,
-			run_name="iterL1",
+			run_name=f"iterL1_run_{run_index:02d}",
 			run=wandb_run,
 			weight_decay=False,
 		)
 
-		print("[STEP] Evaluation")
-		spar = calculate_real_sparsity(model)
-		if (spar - spar_cp[-1] if len(spar_cp) > 0 else spar) >= 5:
-			spar_cp.append(spar)
-			fab_acc_val = fab_norm(model, mini_test_loader)
-			#corr_acc = evaluate_cifar10c_per_corruption(model, data_root=cifar10c_root, severity=3, batch_size=config.BATCH_SIZE, device=device)
-			_, test_acc = test(model, test_loader)
-			acc_cp.append(test_acc)
-			#save_cifar10c_row(spar, test_acc, corr_acc, path="results/resnet20cifar10_corruptions.csv")
-			#corr_acc_cp.append(None)
-			fab_acc_cp.append(fab_acc_val)
+		sparsity = calculate_real_sparsity(model)
+		if sparsity - previous_saved_sparsity >= SPARSITY_STEP or sparsity >= MAX_SPARSITY:
+			_save_checkpoint(run_dir, checkpoint_index, sparsity, model, "prune_recover")
+			previous_saved_sparsity = sparsity
+			checkpoint_index += 1
 
-			checkpoint_idx += 1
-			checkpoint_path = f"models/resnet20_checkpoint_{checkpoint_idx:02d}_sparsity_{spar:.2f}.pth"
-			#torch.save(model.state_dict(), checkpoint_path)
-			print(f"checkpoint saved: {checkpoint_path}")
-
-	print("[SAVE] Writing curve csv")
-	save_sparacc_curve(spar_cp, acc_cp, fab_norm_cp=fab_acc_cp, path="results/resnet20cifar10.csv")
+		if sparsity >= MAX_SPARSITY:
+			break
 
 	if wandb_run is not None:
 		try:
 			import wandb
+
 			wandb.finish()
 		except Exception:
 			pass
+
+
+def main() -> None:
+	print("[SETUP] Loading data and model")
+	train_loader, val_loader, _ = fetch_cifar10()
+	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+	_configure_training()
+	Path("models").mkdir(parents=True, exist_ok=True)
+	Path("results").mkdir(parents=True, exist_ok=True)
+
+	for run_index in range(NUM_RUNS):
+		_train_single_run(run_index, train_loader, val_loader, device)
 
 
 if __name__ == "__main__":
