@@ -30,4 +30,7 @@ A.~Krizhevsky, ``Learning multiple layers of features from tiny images,'' techni
 \bibitem{cifar10c}
 D.~Hendrycks and T.~G. Dietterich, ``Benchmarking neural network robustness to common corruptions and perturbations,'' {\em CoRR}, vol.~abs/1903.12261, 2019.
 
+\bibitem{fab}
+F.~Croce and M.~Hein, ``Minimally distorted adversarial examples with a fast adaptive boundary attack,'' {\em CoRR}, vol.~abs/1907.02044, 2019.
+
 \end{thebibliography}

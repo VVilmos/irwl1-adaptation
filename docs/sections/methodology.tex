@@ -24,6 +24,17 @@ To facilitate the prediction of the impact of common image corruptions the train
 In the context of the OOD generalization problem mentioned in section \ref{subsec:ood&adv}, these real-world distortions cause
 a covariate shift in the distribution of the test data. In other words, only input features suffer a distributional shift, while
 the underlying concept - the class of photographed object in this case - remains the same.
+
 \subsection{Fast Adaptive Boundary}
+
+Apart from OOD robustness, a neural network may need be prepared for adversarial attacks, which were introduced in section \ref{subsec:ood&adv}. These adversarial attacks
+can be categorized in many ways. Methods which have full control over the network are called white-box attacks, while black-box attacks can only give an input and inspect
+ the corresponding output of the model. In case of the former category, some algorithms are looking for the minimal pertubation on the input image which achieves
+  misclassification, while others return an altered image whose distance from the original is just thresholded.  
+Finding minimal pertubations for deep neural networks yields NP-hard optimization problems whose computational costs are prohibitive. Thus, finding scalable heuristics
+which find high-quality results fast became the focus of current literature. Regarding adversarial robustness of trained models, an attack that overestimates the minimal 
+pertubation also overestimates the robustness of the model, thus encouraging false conclusions. 
+The Fast Adaptive Boundary (FAB) attack was specifically tailored to yield high-quality results fast with minimal hyperparameter-tuning required \cite{fab}. 
+
 
 \subsection{Fourier Sensitivity Method}
