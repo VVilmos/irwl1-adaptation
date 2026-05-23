@@ -1,0 +1,29 @@
+\section{Methodology}\label{sec:method}
+
+In this section I present the benchmark dataset and adversarial algorithm utilized to evaluate OOD and adversarial robustness of a (pruned) network.
+
+\subsection{CIFAR Corrupted Benchmark}
+
+The CIFAR-10 and CIFAR-100 datasets have been used as benchmarks for decades in the field of computer vision \cite{cifar10}. The two datasets consits of
+60,000 32x32 RGB images with 10 and 100 different classes, respectively. The images are uniformly distributed across the classes and objects are at the center, thus
+it serves as a clean baseline without any modification that may happen in real-world scenarios.
+
+To facilitate the prediction of the impact of common image corruptions the trained model, the CIFAR-10-C and CIFAR-100-C datasets were
+ constructed \cite{cifar10c}. The authors applied 19 different types of corruptions at varying intensities on the test sets of CIFAR-10 and CIFAR-100, respectively. 
+ More specifically, corruptions are categories into followig categories: noise, blur, weather conditions, and digital corruptions, while intensity levels span from 1 to 5.
+ Figure \ref{fig:cifar10c} shows an example for every category, applied on the same image from CIFAR-10 dataset.
+
+
+ \begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{figs/cifar10c_grid_idx100_sev5.png}
+    \caption{Different types of corruptions with severity level 5 on a CIFAR-10 32x32 RGB image}
+    \label{fig:cifar10c}
+\end{figure}\
+
+In the context of the OOD generalization problem mentioned in section \ref{subsec:ood&adv}, these real-world distortions cause
+a covariate shift in the distribution of the test data. In other words, only input features suffer a distributional shift, while
+the underlying concept - the class of photographed object in this case - remains the same.
+\subsection{Fast Adaptive Boundary}
+
+\subsection{Fourier Sensitivity Method}

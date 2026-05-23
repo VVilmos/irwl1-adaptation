@@ -1,0 +1,33 @@
+\begin{thebibliography}{10}
+
+\bibitem{edgeai}
+R.~Singh and S.~S. Gill, ``Edge ai: A survey,'' {\em Internet of Things and Cyber-Physical Systems}, vol.~3, pp.~71--92, 2023.
+
+\bibitem{effnet}
+M.~Tan and Q.~V. Le, ``Efficientnet: Rethinking model scaling for convolutional neural networks,'' {\em CoRR}, vol.~abs/1905.11946, 2019.
+
+\bibitem{pruning_survey24}
+H.~Cheng, M.~Zhang, and J.~Q. Shi, ``A survey on deep neural network pruning: Taxonomy, comparison, analysis, and recommendations,'' {\em IEEE Transactions on Pattern Analysis and Machine Intelligence}, vol.~46, no.~12, pp.~10558--10578, 2024.
+
+\bibitem{effectofadvtraining}
+K.~Kireev, M.~Andriushchenko, and N.~Flammarion, ``On the effectiveness of adversarial training against common corruptions,'' {\em CoRR}, vol.~abs/2103.02325, 2021.
+
+\bibitem{cards}
+J.~Diffenderfer, B.~R. Bartoldson, S.~Chaganti, J.~Zhang, and B.~Kailkhura, ``A winning hand: Compressing deep networks can improve out-of-distribution robustness,'' {\em CoRR}, vol.~abs/2106.09129, 2021.
+
+\bibitem{survey}
+J.~O. Neill, ``An overview of neural network compression,'' 2020.
+
+\bibitem{oodgeneralization}
+Z.~Shen, J.~Liu, Y.~He, X.~Zhang, R.~Xu, H.~Yu, and P.~Cui, ``Towards out-of-distribution generalization: {A} survey,'' {\em CoRR}, vol.~abs/2108.13624, 2021.
+
+\bibitem{adversarial_survey}
+{XU, Keyizhi}, {LU, Yajuan}, {WANG, Zhongyuan}, and {LIANG, Chao}, ``A survey of adversarial examples in computer vision: Attack, defense, and beyond,'' {\em Wuhan Univ. J. Nat. Sci.}, vol.~30, no.~1, pp.~1--20, 2025.
+
+\bibitem{cifar10}
+A.~Krizhevsky, ``Learning multiple layers of features from tiny images,'' technical report, University of Toronto, 2009.
+
+\bibitem{cifar10c}
+D.~Hendrycks and T.~G. Dietterich, ``Benchmarking neural network robustness to common corruptions and perturbations,'' {\em CoRR}, vol.~abs/1903.12261, 2019.
+
+\end{thebibliography}

@@ -2,3 +2,12 @@ data/
 wandb/
 figs/
 __pycache__/
+
+# LaTeX temporary files
+*.aux
+*.log
+*.toc
+*.synctex.gz
+*.out
+*.fdb_latexmk
+*.fls
