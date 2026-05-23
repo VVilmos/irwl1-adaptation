@@ -21,22 +21,12 @@ module load cuda/12.1    # Adjust to your CUDA version
 source /path/to/venv/bin/activate  # Adjust to your virtual env path
 
 # Navigate to project directory
-cd /path/to/onlab  # Adjust to your project path
+cd /home/nr_havv/nr_haml2025/endomet/irwl1-adaptation  # Adjust to your project path
 
 # Create logs directory
 mkdir -p logs
 
 # Run the training script with HPC-optimized settings
-python scripts/resnet_train.py \
-    --data-root ./data \
-    --output-dir ./results \
-    --checkpoint-dir ./models \
-    --cifar10c-dir ./data/CIFAR-10-C \
-    --max-sparsity 95.0 \
-    --sparsity-increment 5.0 \
-    --device cuda \
-    --deepfool-steps 50 \
-    --num-workers 8 \
-    --disable-wandb
+python scripts/resnet_train.py
 
 echo "Job completed at $(date)"

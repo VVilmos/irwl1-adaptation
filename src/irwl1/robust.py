@@ -294,6 +294,52 @@ def evaluate_cifar10c_top1_accuracy(
 	return _evaluate_top1_accuracy(model, batch_iterator(), resolved_device)
 
 
+def evaluate_cifar10c_per_corruption(
+	model: torch.nn.Module,
+	data_root: str | Path = "data/CIFAR-10-C",
+	severity: int = 1,
+	batch_size: int | None = None,
+	device: torch.device | str | None = None,
+	corruptions: Sequence[str] | None = None,
+	num_workers: int = 0,
+) -> dict:
+	"""Evaluate model on each corruption file under `data_root`.
+
+	Returns a dict mapping corruption filename (without .npy) to top-1 accuracy (percentage).
+	"""
+	resolved_device = _resolve_device(device)
+
+	root = Path(data_root)
+	effective_batch_size = batch_size or config.BATCH_SIZE
+
+	results: dict = {}
+
+	# collect files filtered by optional `corruptions`
+	files = _collect_cifar10c_files(root, corruptions)
+
+	model_was_training = model.training
+	try:
+		for corruption_file in files:
+			corruption = corruption_file.stem
+			loader = create_cifar10c_dataloader(
+				data_root=root,
+				corruption=corruption,
+				severity=severity,
+				batch_size=effective_batch_size,
+				normalize=True,
+				shuffle=False,
+				num_workers=num_workers,
+			)
+
+			acc = _evaluate_top1_accuracy(model, loader, resolved_device)
+			results[corruption] = acc
+	finally:
+		if model_was_training:
+			model.train()
+
+	return results
+
+
 def evaluate_deepfool_average_perturbation_norm(
 	model: torch.nn.Module,
 	data_loader: torch.utils.data.DataLoader,
@@ -422,6 +468,225 @@ def deepfool_norm_in_memory(
 	avg_norm = norms.mean().item()
 
 	return avg_norm
+
+
+def fab_norm(
+	model: torch.nn.Module,
+	data_loader: torch.utils.data.DataLoader,
+	device: torch.device | str | None = None,
+) -> float:
+	"""Return the top-1 accuracy of the model on FAB adversarial inputs."""
+
+	try:
+		import torchattacks
+	except ImportError as exc:  # pragma: no cover - dependency guard
+		raise ImportError(
+			"torchattacks is required for FAB evaluation. Install it with `pip install torchattacks`."
+		) from exc
+
+	resolved_device = _resolve_device(device)
+	model.to(resolved_device)
+	model_was_training = model.training
+	model.eval()
+	eps = 8 / 255
+	steps = config.FAB_STEPS
+	n_restarts = 1
+	alpha_max = 0.1
+	eta = 1.05
+	beta = 0.9
+	seed = 0
+
+	attack = torchattacks.FAB(
+		model,
+		norm="Linf",
+		eps=eps,
+		steps=steps,
+		n_restarts=n_restarts,
+		alpha_max=alpha_max,
+		eta=eta,
+		beta=beta,
+		verbose=False,
+		seed=seed,
+	)
+
+	total_correct = 0
+	total_examples = 0
+
+	try:
+		for inputs, targets in data_loader:
+			inputs = inputs.to(resolved_device)
+			targets = targets.to(resolved_device)
+
+			adversarial_inputs = attack(inputs, targets)
+
+			with torch.no_grad():
+				logits = model(adversarial_inputs)
+				predictions = logits.argmax(dim=1)
+
+			total_correct += (predictions == targets).sum().item()
+			total_examples += targets.size(0)
+	finally:
+		if model_was_training:
+			model.train()
+
+	if total_examples == 0:
+		return 0.0
+
+	return 100.0 * total_correct / total_examples
+
+
+def fab_norm_in_memory(
+	model: torch.nn.Module,
+	images: torch.Tensor,
+	labels: torch.Tensor,
+	device: torch.device | str | None = None,
+) -> float:
+	"""Return the top-1 accuracy of the model on FAB adversarial in-memory inputs."""
+
+	try:
+		import torchattacks
+	except ImportError as exc:  # pragma: no cover - dependency guard
+		raise ImportError(
+			"torchattacks is required for FAB evaluation. Install it with `pip install torchattacks`."
+		) from exc
+
+	resolved_device = _resolve_device(device)
+	model.to(resolved_device)
+	model_was_training = model.training
+	model.eval()
+	eps = 8 / 255
+	steps = 10
+	n_restarts = 1
+	alpha_max = 0.1
+	eta = 1.05
+	beta = 0.9
+	seed = 0
+
+	attack = torchattacks.FAB(
+		model,
+		norm="Linf",
+		eps=eps,
+		steps=steps,
+		n_restarts=n_restarts,
+		alpha_max=alpha_max,
+		eta=eta,
+		beta=beta,
+		verbose=False,
+		seed=seed,
+	)
+
+	images = images.to(resolved_device).float()
+	labels = labels.to(resolved_device).long()
+
+	try:
+		adversarial_images = attack(images, labels)
+		with torch.no_grad():
+			logits = model(adversarial_images)
+			predictions = logits.argmax(dim=1)
+		return 100.0 * (predictions == labels).float().mean().item()
+	finally:
+		if model_was_training:
+			model.train()
+
+
+def pgd_norm(
+	model: torch.nn.Module,
+	data_loader: torch.utils.data.DataLoader,
+	device: torch.device | str | None = None,
+) -> float:
+	"""Return the average L2 norm of the PGD perturbation per input sample."""
+
+	try:
+		import torchattacks
+	except ImportError as exc:  # pragma: no cover - dependency guard
+		raise ImportError(
+			"torchattacks is required for PGD evaluation. Install it with `pip install torchattacks`."
+		) from exc
+
+	resolved_device = _resolve_device(device)
+	model.to(resolved_device)
+	model_was_training = model.training
+	model.eval()
+	eps = 8 / 255
+	alpha = 2 / 255
+	steps = 10
+	random_start = True
+
+	attack = torchattacks.PGD(
+		model,
+		eps=eps,
+		alpha=alpha,
+		steps=steps,
+		random_start=random_start,
+	)
+
+	total_examples = 0
+	total_norm = 0.0
+
+	try:
+		for inputs, targets in data_loader:
+			inputs = inputs.to(resolved_device)
+			targets = targets.to(resolved_device)
+
+			adversarial_inputs = attack(inputs, targets)
+			perturbation = (adversarial_inputs - inputs).flatten(1)
+			batch_norms = torch.linalg.vector_norm(perturbation, ord=2, dim=1)
+
+			total_examples += targets.size(0)
+			total_norm += batch_norms.sum().item()
+	finally:
+		if model_was_training:
+			model.train()
+
+	if total_examples == 0:
+		return 0.0
+
+	return total_norm / total_examples
+
+
+def pgd_norm_in_memory(
+	model: torch.nn.Module,
+	images: torch.Tensor,
+	labels: torch.Tensor,
+	device: torch.device | str | None = None,
+) -> float:
+	"""Return the average L2 norm of the PGD perturbation for in-memory tensors."""
+
+	try:
+		import torchattacks
+	except ImportError as exc:  # pragma: no cover - dependency guard
+		raise ImportError(
+			"torchattacks is required for PGD evaluation. Install it with `pip install torchattacks`."
+		) from exc
+
+	resolved_device = _resolve_device(device)
+	model.to(resolved_device)
+	model_was_training = model.training
+	model.eval()
+	eps = 8 / 255
+	alpha = 2 / 255
+	steps = 10
+	random_start = True
+
+	attack = torchattacks.PGD(
+		model,
+		eps=eps,
+		alpha=alpha,
+		steps=steps,
+		random_start=random_start,
+	)
+
+	images = images.to(resolved_device).float()
+	labels = labels.to(resolved_device).long()
+
+	try:
+		adversarial_images = attack(images, labels)
+		perturbation = (adversarial_images - images).flatten(1)
+		norms = torch.linalg.vector_norm(perturbation, ord=2, dim=1)
+		return norms.mean().item()
+	finally:
+		if model_was_training:
+			model.train()
 
 
 def cifar10c_accuracy(

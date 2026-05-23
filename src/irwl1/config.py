@@ -7,6 +7,7 @@ EPOCHS = 100
 VALIDATION_SPLIT = 0.2
 PATIENCE = 7
 LAMBDA_REG = 0.003
+WEIGHT_DECAY = 1e-4
 
 # Pruning
 REG_TYPE = "L1"
@@ -32,3 +33,4 @@ NUM_PRETRAIN_EPOCHS = 2# number of epochs
 # admin
 MODEL = "ResNet20"
 WANDB_MODE = "online"
+FAB_STEPS = 10

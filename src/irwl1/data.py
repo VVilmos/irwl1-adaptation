@@ -6,7 +6,7 @@ def fetch_fmnist():
     fmnist = torchvision.datasets.FashionMNIST(root=f"./data", train=True,
                                                 transform=torchvision.transforms.Compose([
                                                     torchvision.transforms.ToTensor(),
-                                                    torchvision.transforms.Normalize(mean=(0.5,), std=(0.5,))]), download=True)
+                                                    torchvision.transforms.Normalize(mean=(0.5,), std=(0.5,))]), download=False)
 
     fmnist_train, fmnist_val = torch.utils.data.random_split(fmnist, [50000, 10000])
 
@@ -14,7 +14,7 @@ def fetch_fmnist():
                                                     transform=torchvision.transforms.Compose([
                                                         torchvision.transforms.ToTensor(),
                                                         torchvision.transforms.Normalize(mean=(0.5,), std=(0.5,))]),
-                                                    download=True)
+                                                    download=False)
 
     train_size, test_size, val_size = len(fmnist_train), len(fmnist_test), len(fmnist_val)
 
@@ -31,7 +31,7 @@ def fetch_cifar10():
                                                torchvision.transforms.ToTensor(),
                                                torchvision.transforms.Normalize(mean=(0.5, 0.5, 0.5),
                                                                                 std=(0.5, 0.5, 0.5))]),
-                                           download=True)
+                                           download=False)
 
     cifar10_train, cifar10_val = torch.utils.data.random_split(cifar10, [40000, 10000])
 
@@ -40,7 +40,7 @@ def fetch_cifar10():
                                                     torchvision.transforms.ToTensor(),
                                                     torchvision.transforms.Normalize(mean=(0.5, 0.5, 0.5),
                                                                                      std=(0.5, 0.5, 0.5))]),
-                                                download=True)
+                                                download=False)
 
     train_size, test_size, val_size = len(cifar10_train), len(cifar10_test), len(cifar10_val)
 
@@ -56,7 +56,7 @@ def fetch_cifar10_test_mini():
                                                     torchvision.transforms.ToTensor(),
                                                     torchvision.transforms.Normalize(mean=(0.5, 0.5, 0.5),
                                                                                      std=(0.5, 0.5, 0.5))]),
-                                                download=True)
+                                                download=False)
 
     cifar10_test_mini, _ = torch.utils.data.random_split(cifar10_test, [1000, 9000])
 

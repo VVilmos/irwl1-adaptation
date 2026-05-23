@@ -4,6 +4,7 @@ import wandb
 from copy import deepcopy
 
 import pandas
+from pathlib import Path
 
 import irwl1.config as config
 from irwl1.robust import deepfool_norm, deepfool_norm_in_memory
@@ -134,10 +135,13 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
     return model, run
 
 
-def train(model, train_loader, val_loader, optimizer=None, apply_reg=False, is_new_run=True, run=None, run_name="default"):
+def train(model, train_loader, val_loader, optimizer=None, apply_reg=False, is_new_run=True, run=None, run_name="default", weight_decay=False):
     criterion = torch.nn.CrossEntropyLoss()
     if optimizer is None:
-        optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+        optimizer_kwargs = {"lr": config.LEARNING_RATE}
+        if not apply_reg and weight_decay:
+            optimizer_kwargs["weight_decay"] = config.WEIGHT_DECAY
+        optimizer = torch.optim.Adam(model.parameters(), **optimizer_kwargs)
 
     best_val_loss = float('inf')
     current_patience = config.PATIENCE
@@ -348,11 +352,57 @@ def global_pruning(model, masking=False):
                     layer.mask.copy_((weight_amplitude >= threshold).to(weight.dtype))
 
 
-def save_sparacc_curve(spar_cp, acc_cp, robust_cp, path=config.CURVE_PATH):
+def save_sparacc_curve(spar_cp, acc_cp, pgd_norm_cp=None, corr_acc_cp=None, fab_norm_cp=None, path=config.CURVE_PATH):
     num_records = len(spar_cp)
     df = pandas.read_csv(path, index_col=False)
-    row = {"model": config.MODEL, "reg_type": [config.REG_TYPE] * num_records, "mode": [config.MODE] * num_records, "sparsity": spar_cp, "accuracy": acc_cp, "p_norm": robust_cp,
-           "lambda": [config.LAMBDA_REG] * num_records, "threshold": [config.WEIGHT_PRUNING_THRESHOLD] * num_records, "update_per_epoch": [config.UPDATE_PER_EPOCH] * num_records, "epsilon": [config.EPSILON] * num_records}
+    row = {"model": config.MODEL, "reg_type": [config.REG_TYPE] * num_records, "mode": [config.MODE] * num_records, "sparsity": spar_cp, "accuracy": acc_cp, "pgd_norm": pgd_norm_cp, "fab_norm": fab_norm_cp, "corr_acc": corr_acc_cp,
+           "lambda": [config.LAMBDA_REG] * num_records, "threshold": [config.WEIGHT_PRUNING_THRESHOLD] * num_records, "update_per_epoch": [config.UPDATE_PER_EPOCH] * num_records, "epsilon": [config.EPSILON] * num_records, "weight_decay": [config.WEIGHT_DECAY] * num_records}
     df = pandas.concat([df, pandas.DataFrame(row)], ignore_index=True)
 
     df.to_csv(path, index=False)
+
+
+def save_cifar10c_row(sparsity: float, test_accuracy: float, corruption_accuracies: dict, path: str = "results/resnet20cifar10_corruptions.csv") -> None:
+    """Save a single-row record with per-corruption accuracies.
+
+    The CSV will have one row per call. Columns include standard metadata
+    ('model','reg_type','mode','sparsity','test_accuracy','lambda','threshold',...)
+    and one column per corruption (keys from `corruption_accuracies`). If the
+    file already exists, new corruption columns will be appended to the right.
+    """
+    path = Path(path)
+    base = {
+        "model": config.MODEL,
+        "reg_type": config.REG_TYPE,
+        "mode": config.MODE,
+        "sparsity": sparsity,
+        "test_accuracy": test_accuracy,
+        "lambda": config.LAMBDA_REG,
+        "threshold": config.WEIGHT_PRUNING_THRESHOLD,
+        "update_per_epoch": config.UPDATE_PER_EPOCH,
+        "epsilon": config.EPSILON,
+        "weight_decay": config.WEIGHT_DECAY,
+    }
+
+    # incorporate per-corruption accuracies as separate columns
+    for corr, acc in (corruption_accuracies or {}).items():
+        base[corr] = acc
+
+    df = pandas.DataFrame([base])
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not path.exists():
+        df.to_csv(path, index=False)
+        return
+
+    # If file exists, preserve existing column order and append new columns at the end
+    existing_cols = list(pandas.read_csv(path, nrows=0).columns)
+    # ensure all existing cols appear in df (fill missing with NA)
+    for col in existing_cols:
+        if col not in df.columns:
+            df[col] = pandas.NA
+
+    # order columns: existing then any new ones
+    ordered_cols = existing_cols + [c for c in df.columns if c not in existing_cols]
+    df = df.reindex(columns=ordered_cols)
+    df.to_csv(path, mode="a", header=False, index=False)
