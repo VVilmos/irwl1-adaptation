@@ -31,7 +31,7 @@ def fetch_cifar10():
                                                torchvision.transforms.ToTensor(),
                                                torchvision.transforms.Normalize(mean=(0.5, 0.5, 0.5),
                                                                                 std=(0.5, 0.5, 0.5))]),
-                                           download=False)
+                                           download=True)
 
     cifar10_train, cifar10_val = torch.utils.data.random_split(cifar10, [40000, 10000])
 
@@ -40,7 +40,7 @@ def fetch_cifar10():
                                                     torchvision.transforms.ToTensor(),
                                                     torchvision.transforms.Normalize(mean=(0.5, 0.5, 0.5),
                                                                                      std=(0.5, 0.5, 0.5))]),
-                                                download=False)
+                                                download=True)
 
     train_size, test_size, val_size = len(cifar10_train), len(cifar10_test), len(cifar10_val)
 
