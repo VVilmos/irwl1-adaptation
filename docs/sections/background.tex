@@ -1,4 +1,4 @@
-\section{Background}
+\section{Background}\label{sec:background}
 
 Large neural networks have produced state-of-the-art results in numerous fields such as computer vision
  or natural language processing. To deploy these neural network model in an industry application, the most common option is training 
@@ -14,31 +14,31 @@ Large neural networks have produced state-of-the-art results in numerous fields 
   applications. 
 
   In academia, there has been extensive research to improve them, but most works tackled them separately \cite{effnet} \cite{pruning_survey24}.
-  To improve accuracy, the general approach was training overparametrized networks with regularization. Model compression techniques (i.e. weight pruning, knowledge
+  To improve accuracy, the general approach was training overparameterized networks with regularization. Model compression techniques (i.e. weight pruning, knowledge
   distillation) and novel architecture have been proposed to achieve compactness while retaining accuracy. Finally, increasing robustness has been achieved by 
   augmenting the training dataset to better represent the distribution of inputs at inference \cite{effectofadvtraining}.
 
   However, meeting these requirements simultaneously - so not increasing one at the expense of another - was found to be a challenge \cite{cards}.
   Therefore, it is important to evaluate a technique tackling one of the three requirements on all three aspects. In my case, measuring the impact of model
-  compression on accuracy and robustness as well. In the following chapters, I give an overview of the techniques relevant to this work. 
+  compression on accuracy and robustness as well. In the following sections, we give an overview of the techniques relevant to this work. 
 
 \subsection{Global Magnitude-based Pruning}\label{subsec:prune}
 
 There are many contemporary methods for model compression. The main four categories include network pruning, knowledge distillation, tensor decomposition,
-and quantization \cite{survey}, although it is also common to propose hybrid strategies. Network pruning refers to evaluting weigths or groups of weights
+and quantization \cite{survey}, although it is also common to propose hybrid strategies. Network pruning refers to evaluating weights or groups of weights
 of the model based on a certain importance criteria and removing the ones which were considered the least important. This importance signal could weight
 magnitude, the sensitivity of loss with respect to the weight, or other heuristics. After pruning, a fine-tuning or retraining phase is applied using the 
 remaining weights in order to refit the pruned model to the training data.
 When the magnitude is utilized for representing the importance of weights, the pruning step uses a threshold for comparison, and every weight with magnitude
 below the threshold gets removed. Global pruning refers to having only one threshold and using it across all layers, regardless of their shape and function
 (i.e. classifier layer, convolutional layer). If every layer has its separate, local threshold, the pruning is applied uniformly across the entire network,
-which can lead to sub-optimal sparsity and the increased complexity of tuning these threholds for a deep network \cite{pruning_survey24}. In contrast, 
+which can lead to sub-optimal sparsity and the increased complexity of tuning these thresholds for a deep network \cite{pruning_survey24}. In contrast, 
 global pruning enables layers with different roles (i.e. feature extractor, classifier) to contribute to the overall sparsity non-uniformly.
 
 
 \subsection{Out-of-Distribution and Adversarial Robustness}\label{subsec:ood&adv}
 
-A basic assumption in traditional machine learing theory is that training and test samples follow the same distribution. However, in many applications this
+A basic assumption in traditional machine learning theory is that training and test samples follow the same distribution. However, in many applications this
 assumption may be violated due to distributional shifts in the test set. Although the degraded performance due to the distributional shifts may not be critical
 in recommendation or image classification systems, decreased accuracy in healthcare or self-driving cars could even result in fatalities.
 Therefore, the Out-of-Distribution (OOD) Generalization Problem has
@@ -46,10 +46,10 @@ been formulated and an increasing number of methods and evaluation procedures ha
 distinguishes shifts as either covariate or concept shifts. The former refers to change in the input features distribution $ P(x) $, while the latter indicates
 a different underlying concept or label mapping $P(Y | X)$ present compared to the one generating the training samples.
 
-Besides OOD inputs, an application-ready model is required to be roboust to so-called adversarial inputs as well. By definition, adversarial inputs are 
+Besides OOD inputs, an application-ready model is required to be robust to so-called adversarial inputs as well. By definition, adversarial inputs are 
 maliciously altered data points of the original distribution which are used to make the model generate incorrect outputs \cite{adversarial_survey}.
 As the name implies, there are malevolent actors involved who apply sophisticated methods to hide these modifications from a human inspector. In case of 
-vision models, various optimization strategies can be utilized to the find a specific pertubation applied to the input image to achieve its misclassification.   
+vision models, various optimization strategies can be utilized to the find a specific perturbation applied to the input image to achieve its misclassification.   
 These strategies for corrupting in-distribution inputs are referred to as adversarial attacks, while adversarial training indicates certain modifications
 in the training process to increase robustness to such inputs.
 
