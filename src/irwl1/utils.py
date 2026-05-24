@@ -7,7 +7,6 @@ import pandas
 from pathlib import Path
 
 import irwl1.config as config
-from irwl1.robust import deepfool_norm, deepfool_norm_in_memory
 from irwl1.regularization import calculate_L1_norm, calculate_WL1_norm, L1_penalty_update
 
 

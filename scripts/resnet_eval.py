@@ -21,7 +21,7 @@ def _configure_evaluation() -> None:
 	config.REG_TYPE = "WL1"
 	config.MODEL = "ResNet20"
 	config.WANDB_MODE = "offline"
-	config.FAB_STEPS = 5
+	config.FAB_STEPS = 10
 	config.WEIGHT_DECAY = 0.0
 
 
@@ -43,6 +43,32 @@ def _discover_checkpoints() -> list[Path]:
 	return checkpoints
 
 
+def _evaluate_mean_corrupted_error(
+	model: torch.nn.Module,
+	data_root: str,
+	device: torch.device,
+) -> dict[str, float]:
+	severity_results = [
+		evaluate_cifar10c_per_corruption(
+			model,
+			data_root=data_root,
+			severity=severity,
+			batch_size=config.BATCH_SIZE,
+			device=device,
+		)
+		for severity in range(1, 6)
+	]
+
+	mean_corrupted_error: dict[str, float] = {}
+	for corruption in severity_results[0]:
+		mean_corrupted_error[corruption] = sum(
+			100.0 - severity_result[corruption]
+			for severity_result in severity_results
+		) / len(severity_results)
+
+	return mean_corrupted_error
+
+
 def main() -> None:
 	print("[SETUP] Loading evaluation data")
 	_, _, test_loader = fetch_cifar10()
@@ -62,14 +88,8 @@ def main() -> None:
 		print(f"[EVAL] {checkpoint_path}")
 		model, checkpoint = _load_model_from_checkpoint(checkpoint_path, device)
 		_, test_accuracy = test(model, test_loader)
-		fab_accuracy = fab_norm(model, mini_test_loader, device=device)
-		cifar10c_results = evaluate_cifar10c_per_corruption(
-			model,
-			data_root=cifar10c_root,
-			severity=3,
-			batch_size=config.BATCH_SIZE,
-			device=device,
-		)
+		fab_accuracy, fab_norm_value = fab_norm(model, mini_test_loader, device=device)
+		cifar10c_results = _evaluate_mean_corrupted_error(model, cifar10c_root, device)
 		row = {
 			"checkpoint_path": str(checkpoint_path),
 			"run_dir": checkpoint_path.parent.name,
@@ -78,6 +98,7 @@ def main() -> None:
 			"sparsity": checkpoint.get("sparsity") if isinstance(checkpoint, dict) else None,
 			"test_accuracy": test_accuracy,
 			"fab_accuracy": fab_accuracy,
+			"fab_norm": fab_norm_value,
 		}
 		row.update(cifar10c_results)
 		rows.append(row)

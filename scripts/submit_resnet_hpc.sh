@@ -5,6 +5,7 @@
 #SBATCH --job-name=resnet20-cifar10
 #SBATCH --output=logs/resnet20-%j.out
 #SBATCH --error=logs/resnet20-%j.err
+#SBATCH --array=0-4
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
@@ -26,7 +27,12 @@ cd /home/nr_havv/nr_haml2025/endomet/irwl1-adaptation  # Adjust to your project 
 # Create logs directory
 mkdir -p logs
 
-# Run the training script with HPC-optimized settings
-python scripts/resnet_train.py
+# Run one training job per array task
+RUN_ID="${SLURM_ARRAY_TASK_ID}"
+SEED=$((1234 + RUN_ID))
+
+python scripts/resnet_train.py \
+	--run-id "${RUN_ID}" \
+	--seed "${SEED}"
 
 echo "Job completed at $(date)"

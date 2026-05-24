@@ -125,9 +125,7 @@ def _as_nchw_tensor(array: np.ndarray) -> torch.Tensor:
 
 
 def _find_labels_file(root: Path) -> Path:
-	label_candidates = sorted(
-		path for path in root.rglob("*.npy") if "label" in path.stem.lower()
-	)
+	label_candidates = sorted(path for path in root.rglob("*.npy") if "label" in path.stem.lower())
 	if not label_candidates:
 		raise FileNotFoundError(
 			f"Could not find a labels.npy file under {root}. Expected the standard CIFAR-10-C layout."
@@ -192,7 +190,11 @@ def _iter_cifar10c_batches(
 			yield batch_images, batch_labels
 
 
-def _evaluate_top1_accuracy(model: torch.nn.Module, batch_iterator: Iterable[tuple[torch.Tensor, torch.Tensor]], device: torch.device) -> float:
+def _evaluate_top1_accuracy(
+	model: torch.nn.Module,
+	batch_iterator: Iterable[tuple[torch.Tensor, torch.Tensor]],
+	device: torch.device,
+) -> float:
 	model.to(device)
 	model_was_training = model.training
 	model.eval()
@@ -311,7 +313,6 @@ def evaluate_cifar10c_per_corruption(
 
 	root = Path(data_root)
 	effective_batch_size = batch_size or config.BATCH_SIZE
-
 	results: dict = {}
 
 	# collect files filtered by optional `corruptions`
@@ -340,13 +341,32 @@ def evaluate_cifar10c_per_corruption(
 	return results
 
 
+def _create_fab_attack(model: torch.nn.Module, resolved_device: torch.device):
+	import torchattacks
+
+	attack = torchattacks.FAB(
+		model,
+		norm="Linf",
+		eps=8 / 255,
+		steps=config.FAB_STEPS,
+		n_restarts=1,
+		alpha_max=0.1,
+		eta=1.05,
+		beta=0.9,
+		verbose=False,
+		seed=0,
+	)
+	attack.set_device(resolved_device)
+	attack.set_normalization_used(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+	return attack
+
 
 def fab_norm(
 	model: torch.nn.Module,
 	data_loader: torch.utils.data.DataLoader,
 	device: torch.device | str | None = None,
-) -> float:
-	"""Return the top-1 accuracy of the model on FAB adversarial inputs."""
+) -> tuple[float, float]:
+	"""Return the mean FAB adversarial accuracy and average L2 perturbation norm."""
 
 	try:
 		import torchattacks
@@ -359,51 +379,40 @@ def fab_norm(
 	model.to(resolved_device)
 	model_was_training = model.training
 	model.eval()
-	eps = 8 / 255
-	steps = config.FAB_STEPS
-	n_restarts = 1
-	alpha_max = 0.1
-	eta = 1.05
-	beta = 0.9
-	seed = 0
+	attack = _create_fab_attack(model, resolved_device)
 
-	attack = torchattacks.FAB(
-		model,
-		norm="Linf",
-		eps=eps,
-		steps=steps,
-		n_restarts=n_restarts,
-		alpha_max=alpha_max,
-		eta=eta,
-		beta=beta,
-		verbose=False,
-		seed=seed,
-	)
-
-	total_correct = 0
+	total_norm = 0.0
 	total_examples = 0
+	total_correct = 0
 
 	try:
 		for inputs, targets in data_loader:
-			inputs = inputs.to(resolved_device)
-			targets = targets.to(resolved_device)
+			inputs = inputs.to(resolved_device).float()
+			targets = targets.to(resolved_device).long()
 
 			adversarial_inputs = attack(inputs, targets)
+			raw_inputs = attack.inverse_normalize(inputs)
+			raw_adversarial_inputs = attack.inverse_normalize(adversarial_inputs)
 
 			with torch.no_grad():
 				logits = model(adversarial_inputs)
 				predictions = logits.argmax(dim=1)
-
-			total_correct += (predictions == targets).sum().item()
-			total_examples += targets.size(0)
+				total_correct += (predictions == targets).sum().item()
+				perturbation = (raw_adversarial_inputs - raw_inputs).flatten(1)
+				norm = torch.linalg.vector_norm(perturbation, ord=2, dim=1)
+				total_examples += targets.size(0)
+				total_norm += norm.sum().item()
 	finally:
 		if model_was_training:
 			model.train()
 
 	if total_examples == 0:
-		return 0.0
+		return 0.0, 0.0
 
-	return 100.0 * total_correct / total_examples
+	mean_accuracy = 100.0 * total_correct / total_examples
+	average_norm = total_norm / total_examples
+
+	return mean_accuracy, average_norm
 
 
 def fab_norm_in_memory(
@@ -411,8 +420,8 @@ def fab_norm_in_memory(
 	images: torch.Tensor,
 	labels: torch.Tensor,
 	device: torch.device | str | None = None,
-) -> float:
-	"""Return the top-1 accuracy of the model on FAB adversarial in-memory inputs."""
+) -> tuple[float, float]:
+	"""Return the mean FAB adversarial accuracy and average L2 perturbation norm."""
 
 	try:
 		import torchattacks
@@ -425,39 +434,27 @@ def fab_norm_in_memory(
 	model.to(resolved_device)
 	model_was_training = model.training
 	model.eval()
-	eps = 8 / 255
-	steps = 10
-	n_restarts = 1
-	alpha_max = 0.1
-	eta = 1.05
-	beta = 0.9
-	seed = 0
-
-	attack = torchattacks.FAB(
-		model,
-		norm="Linf",
-		eps=eps,
-		steps=steps,
-		n_restarts=n_restarts,
-		alpha_max=alpha_max,
-		eta=eta,
-		beta=beta,
-		verbose=False,
-		seed=seed,
-	)
+	attack = _create_fab_attack(model, resolved_device)
 
 	images = images.to(resolved_device).float()
 	labels = labels.to(resolved_device).long()
 
 	try:
 		adversarial_images = attack(images, labels)
+		raw_images = attack.inverse_normalize(images)
+		raw_adversarial_images = attack.inverse_normalize(adversarial_images)
 		with torch.no_grad():
 			logits = model(adversarial_images)
 			predictions = logits.argmax(dim=1)
-		return 100.0 * (predictions == labels).float().mean().item()
+			mean_accuracy = 100.0 * (predictions == labels).sum().item() / labels.size(0)
+			perturbation = (raw_adversarial_images - raw_images).flatten(1)
+			norm = torch.linalg.vector_norm(perturbation, ord=2, dim=1)
+			average_norm = norm.mean().item()
 	finally:
 		if model_was_training:
 			model.train()
+
+	return mean_accuracy, average_norm
 
 
 def cifar10c_accuracy(

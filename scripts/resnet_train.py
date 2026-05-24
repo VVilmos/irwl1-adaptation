@@ -1,5 +1,8 @@
 from pathlib import Path
+import argparse
+import random
 
+import numpy as np
 import torch
 
 import irwl1.config as config
@@ -9,7 +12,6 @@ from irwl1.regularization import L1_penalty_init
 from irwl1.utils import calculate_real_sparsity, global_pruning, init_mask, train
 
 
-NUM_RUNS = 1
 SPARSITY_STEP = 5.0
 MAX_SPARSITY = 95.0
 
@@ -27,6 +29,22 @@ def _configure_training() -> None:
 	config.WANDB_MODE = "offline"
 	config.FAB_STEPS = 5
 	config.WEIGHT_DECAY = 0.0
+
+
+def _parse_args() -> argparse.Namespace:
+	parser = argparse.ArgumentParser(description="Train one ResNet20 pruning run")
+	parser.add_argument("--seed", type=int, required=True, help="Random seed for initialization and data order")
+	parser.add_argument("--run-id", type=int, required=True, help="Unique run id for output paths and logging")
+	return parser.parse_args()
+
+
+def _set_seed(seed: int) -> None:
+	random.seed(seed)
+	np.random.seed(seed)
+	torch.manual_seed(seed)
+	if torch.cuda.is_available():
+		torch.cuda.manual_seed(seed)
+		torch.cuda.manual_seed_all(seed)
 
 
 def _build_model(device: torch.device) -> torch.nn.Module:
@@ -51,10 +69,10 @@ def _save_checkpoint(output_dir: Path, checkpoint_index: int, sparsity: float, m
 	return checkpoint_path
 
 
-def _train_single_run(run_index: int, train_loader, val_loader, device: torch.device) -> None:
-	run_dir = Path("models") / f"run_{run_index:02d}"
+def _train_single_run(run_id: int, train_loader, val_loader, device: torch.device) -> None:
+	run_dir = Path("models") / f"run_{run_id:02d}"
 	run_dir.mkdir(parents=True, exist_ok=True)
-	print(f"[RUN {run_index + 1}/{NUM_RUNS}] Starting in {run_dir}")
+	print(f"[RUN {run_id}] Starting in {run_dir}")
 
 	model = _build_model(device)
 	optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
@@ -68,7 +86,7 @@ def _train_single_run(run_index: int, train_loader, val_loader, device: torch.de
 		optimizer=optimizer,
 		apply_reg=False,
 		is_new_run=True,
-		run_name=f"iterL1_run_{run_index:02d}",
+		run_name=f"iterL1_run_{run_id:02d}",
 		weight_decay=False,
 	)
 
@@ -79,7 +97,7 @@ def _train_single_run(run_index: int, train_loader, val_loader, device: torch.de
 
 	while sparsity <= MAX_SPARSITY:
 
-		print(f"[RUN {run_index + 1}/{NUM_RUNS}] Regularization")
+		print(f"[RUN {run_id}] Regularization")
 		config.EPOCHS = config.NUM_REG_EPOCHS
 		model, wandb_run = train(
 			model,
@@ -88,7 +106,7 @@ def _train_single_run(run_index: int, train_loader, val_loader, device: torch.de
 			optimizer=optimizer,
 			apply_reg=True,
 			is_new_run=False,
-			run_name=f"iterL1_run_{run_index:02d}",
+			run_name=f"iterL1_run_{run_id:02d}",
 			run=wandb_run,
 			weight_decay=False,
 		)
@@ -96,12 +114,12 @@ def _train_single_run(run_index: int, train_loader, val_loader, device: torch.de
 
 
 
-		print(f"[RUN {run_index + 1}/{NUM_RUNS}] Pruning")
+		print(f"[RUN {run_id}] Pruning")
 		global_pruning(model, masking=True)
 
 
 
-		print(f"[RUN {run_index + 1}/{NUM_RUNS}] Recovery")
+		print(f"[RUN {run_id}] Recovery")
 		config.EPOCHS = config.NUM_RECOVERY_EPOCHS
 		optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
 		model, wandb_run = train(
@@ -111,7 +129,7 @@ def _train_single_run(run_index: int, train_loader, val_loader, device: torch.de
 			optimizer=optimizer,
 			apply_reg=False,
 			is_new_run=False,
-			run_name=f"iterL1_run_{run_index:02d}",
+			run_name=f"iterL1_run_{run_id:02d}",
 			run=wandb_run,
 			weight_decay=False,
 		)
@@ -135,6 +153,9 @@ def _train_single_run(run_index: int, train_loader, val_loader, device: torch.de
 
 
 def main() -> None:
+	args = _parse_args()
+	_set_seed(args.seed)
+
 	print("[SETUP] Loading data and model")
 	train_loader, val_loader, _ = fetch_cifar10()
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -142,8 +163,7 @@ def main() -> None:
 	Path("models").mkdir(parents=True, exist_ok=True)
 	Path("results").mkdir(parents=True, exist_ok=True)
 
-	for run_index in range(NUM_RUNS):
-		_train_single_run(run_index, train_loader, val_loader, device)
+	_train_single_run(args.run_id, train_loader, val_loader, device)
 
 
 if __name__ == "__main__":
