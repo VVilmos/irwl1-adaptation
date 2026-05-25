@@ -41,7 +41,7 @@ def _parse_args() -> argparse.Namespace:
 		default=Path("results") / "fourier_sensitivity" / "run_01",
 		help="Directory where heatmaps, plots, and metadata will be written",
 	)
-	parser.add_argument("--epsilon", type=float, default=15 / 255, help="Fourier perturbation budget")
+	parser.add_argument("--epsilon", type=float, default=2.0, help="Fourier perturbation budget")
 	return parser.parse_args()
 
 
@@ -78,12 +78,12 @@ def generate_fourier_basis(height: int, width: int) -> torch.Tensor:
 	return basis_matrices
 
 
-def evaluate_fourier_sensitivity_ratio_optimized(
+def evaluate_fourier_sensitivity_difference_optimized(
 	model: torch.nn.Module,
 	dataloader,
 	device: torch.device,
 	clean_error_rate: float,
-	epsilon: float = 15 / 255,
+	epsilon: float = 2.0,
 	basis_set: torch.Tensor | None = None,
 ) -> np.ndarray:
 	model.eval()
@@ -96,7 +96,7 @@ def evaluate_fourier_sensitivity_ratio_optimized(
 		basis_set = basis_set.to(device)
 
 	if clean_error_rate <= 0:
-		raise ValueError("clean_error_rate must be positive to compute a sensitivity ratio")
+		raise ValueError("clean_error_rate must be positive to compute a sensitivity difference")
 
 	heatmap = np.zeros((height, width), dtype=np.float32)
 
@@ -128,8 +128,8 @@ def evaluate_fourier_sensitivity_ratio_optimized(
 			total_errors += batch_errors
 			total_samples += batch_size
 
-		row_error_rate = (total_errors / total_samples).detach().cpu().numpy()
-		heatmap[i, :] = row_error_rate / clean_error_rate
+		perturbed_error_rate = (total_errors / total_samples).detach().cpu().numpy()
+		heatmap[i, :] = perturbed_error_rate - clean_error_rate
 
 	return heatmap
 
@@ -137,7 +137,7 @@ def evaluate_fourier_sensitivity_ratio_optimized(
 def plot_fourier_heatmap(heatmap: np.ndarray, output_path: Path, title: str) -> None:
 	fig, ax = plt.subplots(figsize=(6.5, 6.5))
 	image = ax.imshow(heatmap, cmap="magma", interpolation="nearest")
-	fig.colorbar(image, ax=ax, label="Perturbed error / clean error")
+	fig.colorbar(image, ax=ax, label="Perturbed error - clean error")
 	ax.set_title(title)
 	ax.set_xlabel("Horizontal Frequency (j)")
 	ax.set_ylabel("Vertical Frequency (i)")
@@ -166,25 +166,26 @@ def main() -> None:
 		model, checkpoint = _load_model_from_checkpoint(checkpoint_path, device)
 		_, clean_accuracy = test(model, test_loader)
 		clean_error_rate = 1.0 - (clean_accuracy / 100.0)
-		heatmap = evaluate_fourier_sensitivity_ratio_optimized(
+		print(f"epsilon: {args.epsilon * 0.8}")
+		heatmap = evaluate_fourier_sensitivity_difference_optimized(
 			model=model,
 			dataloader=test_loader,
 			device=device,
 			clean_error_rate=clean_error_rate,
-			epsilon=args.epsilon,
+			epsilon=args.epsilon * 0.8,
 			basis_set=basis_set,
 		)
 
 		checkpoint_stem = checkpoint_path.stem
 		checkpoint_output_dir = args.output_dir / checkpoint_stem
 		checkpoint_output_dir.mkdir(parents=True, exist_ok=True)
-		npy_path = checkpoint_output_dir / f"{checkpoint_stem}_ratio_heatmap.npy"
-		png_path = checkpoint_output_dir / f"{checkpoint_stem}_ratio_heatmap.png"
+		npy_path = checkpoint_output_dir / f"{checkpoint_stem}_difference_heatmap.npy"
+		png_path = checkpoint_output_dir / f"{checkpoint_stem}_difference_heatmap.png"
 		np.save(npy_path, heatmap)
 		plot_fourier_heatmap(
 			heatmap,
 			png_path,
-			title=f"Fourier sensitivity ratio for {checkpoint_stem}\n(clean error = {clean_error_rate:.4f})",
+			title=f"Fourier sensitivity difference for {checkpoint_stem}\n(clean error = {clean_error_rate:.4f})",
 		)
 
 		metadata_rows.append(
@@ -201,7 +202,7 @@ def main() -> None:
 			}
 		)
 
-	metadata_path = args.output_dir / "fourier_sensitivity_ratio_metadata.csv"
+		metadata_path = args.output_dir / "fourier_sensitivity_difference_metadata.csv"
 	pd.DataFrame(metadata_rows).to_csv(metadata_path, index=False)
 	print(f"[SAVE] Wrote heatmaps and metadata to {args.output_dir}")
 

@@ -1,5 +1,7 @@
 data/
 wandb/
+models/
+results/
 figs/
 __pycache__/
 
