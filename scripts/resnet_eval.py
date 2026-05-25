@@ -43,30 +43,6 @@ def _discover_checkpoints() -> list[Path]:
 	return checkpoints
 
 
-def _evaluate_mean_corrupted_error(
-	model: torch.nn.Module,
-	data_root: str,
-	device: torch.device,
-) -> dict[str, float]:
-	severity_results = [
-		evaluate_cifar10c_per_corruption(
-			model,
-			data_root=data_root,
-			severity=severity,
-			batch_size=config.BATCH_SIZE,
-			device=device,
-		)
-		for severity in range(1, 6)
-	]
-
-	mean_corrupted_error: dict[str, float] = {}
-	for corruption in severity_results[0]:
-		mean_corrupted_error[corruption] = sum(
-			100.0 - severity_result[corruption]
-			for severity_result in severity_results
-		) / len(severity_results)
-
-	return mean_corrupted_error
 
 
 def main() -> None:
