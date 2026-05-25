@@ -1,10 +1,10 @@
 \begin{thebibliography}{10}
 
-\bibitem{edgeai}
-R.~Singh and S.~S. Gill, ``Edge ai: A survey,'' {\em Internet of Things and Cyber-Physical Systems}, vol.~3, pp.~71--92, 2023.
-
 \bibitem{effnet}
 M.~Tan and Q.~V. Le, ``Efficientnet: Rethinking model scaling for convolutional neural networks,'' {\em CoRR}, vol.~abs/1905.11946, 2019.
+
+\bibitem{edgeai}
+R.~Singh and S.~S. Gill, ``Edge ai: A survey,'' {\em Internet of Things and Cyber-Physical Systems}, vol.~3, pp.~71--92, 2023.
 
 \bibitem{pruning_survey24}
 H.~Cheng, M.~Zhang, and J.~Q. Shi, ``A survey on deep neural network pruning: Taxonomy, comparison, analysis, and recommendations,'' {\em IEEE Transactions on Pattern Analysis and Machine Intelligence}, vol.~46, no.~12, pp.~10558--10578, 2024.
@@ -32,5 +32,11 @@ D.~Hendrycks and T.~G. Dietterich, ``Benchmarking neural network robustness to c
 
 \bibitem{fab}
 F.~Croce and M.~Hein, ``Minimally distorted adversarial examples with a fast adaptive boundary attack,'' {\em CoRR}, vol.~abs/1907.02044, 2019.
+
+\bibitem{fourier_analysis}
+D.~Yin, R.~G. Lopes, J.~Shlens, E.~D. Cubuk, and J.~Gilmer, ``A fourier perspective on model robustness in computer vision,'' {\em CoRR}, vol.~abs/1906.08988, 2019.
+
+\bibitem{boyd}
+E.~J. Candes, M.~B. Wakin, and S.~P. Boyd, ``Enhancing sparsity by reweighted l1 minimization,'' 2007.
 
 \end{thebibliography}

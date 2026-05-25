@@ -61,7 +61,6 @@
 
 \input{sections/background.tex}
 
-\input{sections/related.tex}
 \input{sections/methodology.tex}
 \input{sections/exp.tex}
 \input{sections/summary.tex}
@@ -71,7 +70,23 @@
 \bibliographystyle{ieeetr}
 
 \appendix
-\section{Appendix}
-\include{tables/cifar10c}
-
+\section{Appendix}\label{sec:appendix}
+\begin{table}[h]
+\centering
+\caption{Hyperparameter Configuration for Training}
+\label{tab:training_params}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Optimizer & Adam \\
+Learning Rate & $1 \times 10^{-3}$ \\
+Batch Size & 64 \\
+Early Stopping Patience & 8 \\
+Loss Function & Cross-Entropy \\
+Activation & ReLU \\
+Weight initialization & Uniform Xavier \\
+\bottomrule
+\end{tabular}
+\end{table}
 \end{document}

@@ -13,3 +13,6 @@ __pycache__/
 *.out
 *.fdb_latexmk
 *.fls
+*.bbl
+*.blg
+*.lof
