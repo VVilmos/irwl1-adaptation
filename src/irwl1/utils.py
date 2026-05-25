@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import wandb
 from copy import deepcopy
+import math
 
 import pandas
 from pathlib import Path
@@ -49,14 +50,53 @@ def calculate_real_sparsity(model):
     return num_zero_weights / num_total_weights * 100
 
 
-def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_tensor, val_label_tensor, optimizer=None, apply_reg=False, is_new_run=True, run=None, run_name="default"):
+def _regularization_update_batches(num_batches):
+    update_batches = set()
+
+    for update_index in range(1, config.UPDATE_PER_EPOCH + 1):
+        batch_number = math.ceil(update_index * num_batches / (config.UPDATE_PER_EPOCH + 1))
+        update_batches.add(min(max(batch_number, 1), num_batches))
+
+    return update_batches
+
+
+def _advance_epsilon(update_count):
+    decay_steps = max(1, config.EPSILON_DECAY_STEPS)
+    progress = min(update_count, decay_steps) / decay_steps
+    steepness = max(1e-6, config.EPSILON_SIGMOID_STEEPNESS)
+    center = min(max(config.EPSILON_SIGMOID_CENTER, 0.0), 1.0)
+    sigmoid_start = 1 / (1 + math.exp(steepness * center))
+    sigmoid_end = 1 / (1 + math.exp(-steepness * (1 - center)))
+    sigmoid_progress = 1 / (1 + math.exp(-steepness * (progress - center)))
+    eased_progress = (sigmoid_progress - sigmoid_start) / (sigmoid_end - sigmoid_start)
+    eased_progress = min(max(eased_progress, 0.0), 1.0)
+    log_eps = math.log(config.EPSILON_START) + eased_progress * (math.log(config.EPSILON_END) - math.log(config.EPSILON_START))
+    config.EPSILON = max(config.EPSILON_END, math.exp(log_eps))
+
+
+def _is_sparsity_change_minimal(previous_thresholded_sparsity, current_thresholded_sparsity):
+    return abs(current_thresholded_sparsity - previous_thresholded_sparsity) <= config.THRESHOLDED_SPARSITY_MIN_DELTA
+
+
+def _has_epsilon_passed_spike():
+    return config.EPSILON <= config.EPSILON_SPIKE_INDICATOR
+
+
+def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_tensor, val_label_tensor, optimizer=None, is_new_run=True, run=None, run_name="default"):
     criterion = torch.nn.CrossEntropyLoss()
     if optimizer is None:
-        optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=config.LEARNING_RATE,
+            weight_decay=config.WEIGHT_DECAY,
+        )
 
-    best_val_loss = float('inf')
+    best_thresholded_sparsity = float('-inf')
+    previous_thresholded_sparsity = None
     current_patience = config.PATIENCE
     best_params = None
+    config.EPSILON = config.EPSILON_START
+    epsilon_update_count = 0
 
     if is_new_run:
         if config.REG_TYPE == "L1":
@@ -67,9 +107,9 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
             run = wandb.init(project=f"pre_pruning_tests_{config.MODEL}", name=run_name, mode=config.WANDB_MODE)
 
     train_size = train_image_tensor.shape[0]
-    total_num_batches = round(train_size / config.BATCH_SIZE)
+    total_num_batches = math.ceil(train_size / config.BATCH_SIZE)
 
-    update_interval = max(1, total_num_batches / config.UPDATE_PER_EPOCH)
+    update_batches = _regularization_update_batches(total_num_batches)
 
     for epoch in range(config.EPOCHS):
         model.train()
@@ -83,68 +123,80 @@ def train_in_memory(model, train_image_tensor, train_label_tensor, val_image_ten
             outputs = model(train_image_tensor[i:i + config.BATCH_SIZE])
             data_loss = criterion(input=outputs, target=train_label_tensor[i:i + config.BATCH_SIZE])
 
-            if apply_reg:
-                match(config.REG_TYPE):
-                    case "WL1":
-                        reg_loss = config.LAMBDA_REG * calculate_WL1_norm(model)
-                        loss = data_loss + reg_loss
-                    case "L1":
-                        reg_loss = config.LAMBDA_REG * calculate_L1_norm(model)
-                        loss = data_loss + reg_loss
-                    case "L0":
-                        loss = data_loss
-                    case "None":
-                        loss = data_loss
-            else:
-                loss = data_loss
+            match(config.REG_TYPE):
+                case "WL1":
+                    reg_loss = config.LAMBDA_REG * calculate_WL1_norm(model)
+                    loss = data_loss + reg_loss
+                case "L1":
+                    reg_loss = config.LAMBDA_REG * calculate_L1_norm(model)
+                    loss = data_loss + reg_loss
+                case "L0":
+                    loss = data_loss
+                case "None":
+                    loss = data_loss
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             total_train_loss += data_loss.item()
             optimizer.step()
 
-            if apply_reg and config.REG_TYPE == "WL1" and ((i/config.BATCH_SIZE) % update_interval == update_interval - 1):
+            if config.REG_TYPE == "WL1" and ((i // config.BATCH_SIZE) + 1 in update_batches):
                 L1_penalty_update(model)
+                epsilon_update_count += 1
+                _advance_epsilon(epsilon_update_count)
 
+
+        ## VALIDATION AND LOGGING
         avg_train_loss = total_train_loss / total_num_batches
         current_val_loss, val_acc = validate_in_memory(model, val_image_tensor, val_label_tensor)
         current_thresholded_sparsity = calculate_thresholded_sparsity(model)
         current_real_sparsity = calculate_real_sparsity(model)
+        current_lr = optimizer.param_groups[0]["lr"]
+        sparsity_delta = None if previous_thresholded_sparsity is None else abs(current_thresholded_sparsity - previous_thresholded_sparsity)
 
-        run.log({"train/loss": avg_train_loss, "val/loss": current_val_loss, "val/acc": val_acc,  "train/thresholded_sparsity": current_thresholded_sparsity, "train/real_sparsity": current_real_sparsity})
+        run.log({"train/loss": avg_train_loss, "val/loss": current_val_loss, "val/acc": val_acc,  "train/thresholded_sparsity": current_thresholded_sparsity, "train/thresholded_sparsity_delta": sparsity_delta, "train/real_sparsity": current_real_sparsity, "train/lr": current_lr, "train/epsilon": config.EPSILON})
 
-        if current_val_loss < best_val_loss:
-            best_val_loss = current_val_loss
+
+        ## EARLY STOPPING ON THRESHOLDED SPARSITY PLATEAU
+        is_sparsity_improved = current_thresholded_sparsity > best_thresholded_sparsity
+        if is_sparsity_improved:
+            best_thresholded_sparsity = current_thresholded_sparsity
             best_params = deepcopy(model.state_dict())
-            current_patience = config.PATIENCE
-        else:
-            current_patience -= 1
+
+        if previous_thresholded_sparsity is not None and _has_epsilon_passed_spike():
+            if _is_sparsity_change_minimal(previous_thresholded_sparsity, current_thresholded_sparsity):
+                current_patience -= 1
+            else:
+                current_patience = config.PATIENCE
+
+        previous_thresholded_sparsity = current_thresholded_sparsity
 
         if current_patience == 0:
             break
 
+
     if best_params is not None:
         model.load_state_dict(best_params)
 
-    if apply_reg:
-        print(f"Ended reg_train phase after {epoch}")
-    else:
-        print(f"Ended recovery phase after {epoch}")
+    print(f"Ended training after {epoch}")
 
     return model, run
 
 
-def train(model, train_loader, val_loader, optimizer=None, apply_reg=False, is_new_run=True, run=None, run_name="default", weight_decay=False):
+def train(model, train_loader, val_loader, optimizer=None, is_new_run=True, run=None, run_name="default", weight_decay=False):
     criterion = torch.nn.CrossEntropyLoss()
     if optimizer is None:
         optimizer_kwargs = {"lr": config.LEARNING_RATE}
-        if not apply_reg and weight_decay:
+        if weight_decay:
             optimizer_kwargs["weight_decay"] = config.WEIGHT_DECAY
         optimizer = torch.optim.Adam(model.parameters(), **optimizer_kwargs)
 
-    best_val_loss = float('inf')
+    best_thresholded_sparsity = float('-inf')
+    previous_thresholded_sparsity = None
     current_patience = config.PATIENCE
     best_params = None
+    config.EPSILON = config.EPSILON_START
+    epsilon_update_count = 0
 
     if is_new_run:
         if config.REG_TYPE == "L1":
@@ -155,7 +207,7 @@ def train(model, train_loader, val_loader, optimizer=None, apply_reg=False, is_n
             run = wandb.init(project=f"pre_pruning_tests_{config.MODEL}", name=run_name, mode=config.WANDB_MODE)
 
     total_num_batches = len(train_loader)
-    update_interval = max(1, round(total_num_batches / config.UPDATE_PER_EPOCH))
+    update_batches = _regularization_update_batches(total_num_batches)
 
     for epoch in range(config.EPOCHS):
         model.train()
@@ -168,42 +220,49 @@ def train(model, train_loader, val_loader, optimizer=None, apply_reg=False, is_n
             outputs = model(inputs)
             data_loss = criterion(input=outputs, target=targets)
 
-            if apply_reg:
-                match(config.REG_TYPE):
-                    case "WL1":
-                        reg_loss = config.LAMBDA_REG * calculate_WL1_norm(model)
-                        loss = data_loss + reg_loss
-                    case "L1":
-                        reg_loss = config.LAMBDA_REG * calculate_L1_norm(model)
-                        loss = data_loss + reg_loss
-                    case "L0":
-                        loss = data_loss
-                    case "None":
-                        loss = data_loss
-            else:
-                loss = data_loss
+            match(config.REG_TYPE):
+                case "WL1":
+                    reg_loss = config.LAMBDA_REG * calculate_WL1_norm(model)
+                    loss = data_loss + reg_loss
+                case "L1":
+                    reg_loss = config.LAMBDA_REG * calculate_L1_norm(model)
+                    loss = data_loss + reg_loss
+                case "L0":
+                    loss = data_loss
+                case "None":
+                    loss = data_loss
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             total_train_loss += data_loss.item()
             optimizer.step()
 
-            if apply_reg and config.REG_TYPE == "WL1" and ((batch_index + 1) % update_interval == 0):
+            if config.REG_TYPE == "WL1" and ((batch_index + 1) in update_batches):
                 L1_penalty_update(model)
+                epsilon_update_count += 1
+                _advance_epsilon(epsilon_update_count)
 
         avg_train_loss = total_train_loss / total_num_batches
         current_val_loss, val_acc = validate(model, val_loader)
         current_thresholded_sparsity = calculate_thresholded_sparsity(model)
         current_real_sparsity = calculate_real_sparsity(model)
+        current_lr = optimizer.param_groups[0]["lr"]
+        sparsity_delta = None if previous_thresholded_sparsity is None else abs(current_thresholded_sparsity - previous_thresholded_sparsity)
 
-        run.log({"train/loss": avg_train_loss, "val/loss": current_val_loss, "val/acc": val_acc, "train/thresholded_sparsity": current_thresholded_sparsity, "train/real_sparsity": current_real_sparsity})
+        run.log({"train/loss": avg_train_loss, "val/loss": current_val_loss, "val/acc": val_acc, "train/thresholded_sparsity": current_thresholded_sparsity, "train/thresholded_sparsity_delta": sparsity_delta, "train/real_sparsity": current_real_sparsity, "train/lr": current_lr, "train/epsilon": config.EPSILON})
 
-        if current_val_loss < best_val_loss:
-            best_val_loss = current_val_loss
+        is_sparsity_improved = current_thresholded_sparsity > best_thresholded_sparsity
+        if is_sparsity_improved:
+            best_thresholded_sparsity = current_thresholded_sparsity
             best_params = deepcopy(model.state_dict())
-            current_patience = config.PATIENCE
-        else:
-            current_patience -= 1
+
+        if previous_thresholded_sparsity is not None and _has_epsilon_passed_spike():
+            if _is_sparsity_change_minimal(previous_thresholded_sparsity, current_thresholded_sparsity):
+                current_patience -= 1
+            else:
+                current_patience = config.PATIENCE
+
+        previous_thresholded_sparsity = current_thresholded_sparsity
 
         if current_patience == 0:
             break
@@ -211,10 +270,7 @@ def train(model, train_loader, val_loader, optimizer=None, apply_reg=False, is_n
     if best_params is not None:
         model.load_state_dict(best_params)
 
-    if apply_reg:
-        print(f"Ended reg_train phase after {epoch}")
-    else:
-        print(f"Ended recovery phase after {epoch}")
+    print(f"Ended training after {epoch}")
 
     return model, run
 
@@ -309,7 +365,7 @@ def init_mask(model):
                         layer.register_buffer("mask", torch.ones(weight.shape[0], dtype=torch.float32, device=weight.device))
                         weight.register_hook(lambda grad, l=layer: grad * l.mask[:, None, None, None])
 
-        elif type(layer) == nn.Linear:
+        elif (type(layer) == nn.Linear) and (config.MODE == "weight-wise"):
             weight = layer.weight
             with torch.no_grad():
                 layer.register_buffer("mask", torch.ones(weight.shape, dtype=torch.float32, device=weight.device))
@@ -318,29 +374,40 @@ def init_mask(model):
 
 # using global threshold for pruning
 def global_pruning(model, masking=False):
-    threshold = config.WEIGHT_PRUNING_THRESHOLD
     for name, layer in model.named_modules():
         if _should_skip_module(name):
             continue
 
         if type(layer) == nn.Conv2d:
-            weight = layer.weight
             with torch.no_grad():
                 match(config.MODE):
                     case "weight-wise":
-                        weight_amplitude = torch.abs(weight)
-                        pruned_weight = weight * (weight_amplitude >= threshold).to(weight.dtype)
+                        threshold = config.WEIGHT_PRUNING_THRESHOLD
+                        weight_amplitude = torch.abs(layer.weight)
+                        pruned_weight = layer.weight * (weight_amplitude >= threshold).to(layer.weight.dtype)
                         layer.weight.copy_(pruned_weight)
 
                         if masking:
-                            layer.mask.copy_((weight_amplitude >= threshold).to(weight.dtype))
+                            layer.mask.copy_((weight_amplitude >= threshold).to(layer.weight.dtype))
 
                     case "kernel-wise":
-                        pass
-                    case "channel-wise":
-                        pass
+                        threshold = config.KERNEL_PRUNING_THRESHOLD
+                        kernel_amplitude = torch.sqrt(torch.pow(layer.weight, 2).sum(dim=[2, 3]))
+                        pruned_weight = layer.weight * (kernel_amplitude >= threshold).to(layer.weight.dtype)[:, :, None, None]
+                        layer.weight.copy_(pruned_weight)
 
-        elif type(layer) == nn.Linear:
+                        if masking:
+                            layer.mask.copy_((kernel_amplitude >= threshold).to(layer.weight.dtype)[:, :, None, None])
+
+                    case "channel-wise":
+                        threshold = config.CHANNEL_PRUNING_THRESHOLD
+                        channel_amplitude = torch.sqrt(torch.pow(layer.weight, 2).sum(dim=[1, 2, 3]))
+                        pruned_weight = layer.weight * (channel_amplitude >= threshold).to(layer.weight.dtype)[:, None, None, None]
+                        layer.weight.copy_(pruned_weight)
+                        if masking:
+                            layer.mask.copy_((channel_amplitude >= threshold).to(layer.weight.dtype)[:, None, None, None])
+
+        elif (type(layer) == nn.Linear) and (config.MODE == "weight-wise"):
             weight = layer.weight
             with torch.no_grad():
                 weight_amplitude = torch.abs(weight)
@@ -351,57 +418,17 @@ def global_pruning(model, masking=False):
                     layer.mask.copy_((weight_amplitude >= threshold).to(weight.dtype))
 
 
-def save_sparacc_curve(spar_cp, acc_cp, pgd_norm_cp=None, corr_acc_cp=None, fab_norm_cp=None, path=config.CURVE_PATH):
+def save_sparacc_curve(spar_cp, acc_cp, path=config.CURVE_PATH):
     num_records = len(spar_cp)
     df = pandas.read_csv(path, index_col=False)
-    row = {"model": config.MODEL, "reg_type": [config.REG_TYPE] * num_records, "mode": [config.MODE] * num_records, "sparsity": spar_cp, "accuracy": acc_cp, "pgd_norm": pgd_norm_cp, "fab_norm": fab_norm_cp, "corr_acc": corr_acc_cp,
-           "lambda": [config.LAMBDA_REG] * num_records, "threshold": [config.WEIGHT_PRUNING_THRESHOLD] * num_records, "update_per_epoch": [config.UPDATE_PER_EPOCH] * num_records, "epsilon": [config.EPSILON] * num_records, "weight_decay": [config.WEIGHT_DECAY] * num_records}
+    row = {"model": config.MODEL, "reg_type": [config.REG_TYPE] * num_records, "mode": [config.MODE] * num_records, "sparsity": spar_cp,
+            "accuracy": acc_cp, "lambda": [config.LAMBDA_REG] * num_records, "threshold": [config.WEIGHT_PRUNING_THRESHOLD] * num_records,
+            "update_per_epoch": [config.UPDATE_PER_EPOCH] * num_records, "epsilon": [config.EPSILON] * num_records,
+             "weight_decay": [config.WEIGHT_DECAY] * num_records
+    }
+
     df = pandas.concat([df, pandas.DataFrame(row)], ignore_index=True)
 
     df.to_csv(path, index=False)
 
 
-def save_cifar10c_row(sparsity: float, test_accuracy: float, corruption_accuracies: dict, path: str = "results/resnet20cifar10_corruptions.csv") -> None:
-    """Save a single-row record with per-corruption accuracies.
-
-    The CSV will have one row per call. Columns include standard metadata
-    ('model','reg_type','mode','sparsity','test_accuracy','lambda','threshold',...)
-    and one column per corruption (keys from `corruption_accuracies`). If the
-    file already exists, new corruption columns will be appended to the right.
-    """
-    path = Path(path)
-    base = {
-        "model": config.MODEL,
-        "reg_type": config.REG_TYPE,
-        "mode": config.MODE,
-        "sparsity": sparsity,
-        "test_accuracy": test_accuracy,
-        "lambda": config.LAMBDA_REG,
-        "threshold": config.WEIGHT_PRUNING_THRESHOLD,
-        "update_per_epoch": config.UPDATE_PER_EPOCH,
-        "epsilon": config.EPSILON,
-        "weight_decay": config.WEIGHT_DECAY,
-    }
-
-    # incorporate per-corruption accuracies as separate columns
-    for corr, acc in (corruption_accuracies or {}).items():
-        base[corr] = acc
-
-    df = pandas.DataFrame([base])
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if not path.exists():
-        df.to_csv(path, index=False)
-        return
-
-    # If file exists, preserve existing column order and append new columns at the end
-    existing_cols = list(pandas.read_csv(path, nrows=0).columns)
-    # ensure all existing cols appear in df (fill missing with NA)
-    for col in existing_cols:
-        if col not in df.columns:
-            df[col] = pandas.NA
-
-    # order columns: existing then any new ones
-    ordered_cols = existing_cols + [c for c in df.columns if c not in existing_cols]
-    df = df.reindex(columns=ordered_cols)
-    df.to_csv(path, mode="a", header=False, index=False)

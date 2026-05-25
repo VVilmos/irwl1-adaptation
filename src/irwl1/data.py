@@ -44,9 +44,9 @@ def fetch_cifar10():
 
     train_size, test_size, val_size = len(cifar10_train), len(cifar10_test), len(cifar10_val)
 
-    train_loader = torch.utils.data.DataLoader(cifar10_train, batch_size=config.BATCH_SIZE, shuffle=True, pin_memory=True)
-    val_loader = torch.utils.data.DataLoader(cifar10_val, batch_size=config.BATCH_SIZE, shuffle=False, pin_memory=True)
-    test_loader = torch.utils.data.DataLoader(cifar10_test, batch_size=config.BATCH_SIZE, shuffle=False, pin_memory=True)
+    train_loader = torch.utils.data.DataLoader(cifar10_train, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = torch.utils.data.DataLoader(cifar10_val, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
+    test_loader = torch.utils.data.DataLoader(cifar10_test, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
 
     return train_loader, val_loader, test_loader
 

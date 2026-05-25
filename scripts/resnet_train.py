@@ -9,26 +9,30 @@ import irwl1.config as config
 from irwl1.data import fetch_cifar10
 from irwl1.model import ResNet20
 from irwl1.regularization import L1_penalty_init
-from irwl1.utils import calculate_real_sparsity, global_pruning, init_mask, train
+from irwl1.utils import calculate_real_sparsity, calculate_thresholded_sparsity, global_pruning, init_mask, train
 
 
-SPARSITY_STEP = 5.0
 MAX_SPARSITY = 95.0
+SPARSITY_STALL_PATIENCE = 9
+MIN_SPARSITY_IMPROVEMENT = 0.0
+MAX_NO_PROGRESS_PRUNES = 3
 
 
 def _configure_training() -> None:
 	config.WEIGHT_PRUNING_THRESHOLD = 1e-5
-	config.EPSILON = 1e-6
+	config.EPSILON = config.EPSILON_START
+
+	# Update penalties once per epoch and decay epsilon on the same cadence.
 	config.UPDATE_PER_EPOCH = 1
-	config.NUM_REG_EPOCHS = 50
-	config.NUM_PRETRAIN_EPOCHS = 10
-	config.NUM_RECOVERY_EPOCHS = 10
+	config.PATIENCE = SPARSITY_STALL_PATIENCE
+
 	config.MODE = "weight-wise"
 	config.REG_TYPE = "WL1"
 	config.MODEL = "ResNet20"
-	config.WANDB_MODE = "offline"
-	config.FAB_STEPS = 5
+	config.WANDB_MODE = "online"
 	config.WEIGHT_DECAY = 1e-4
+	config.LAMBDA_REG = 0.01
+	config.LEARNING_RATE = 0.001
 
 
 def _parse_args() -> argparse.Namespace:
@@ -54,100 +58,46 @@ def _build_model(device: torch.device) -> torch.nn.Module:
 	return model
 
 
-def _set_optimizer_weight_decay(optimizer: torch.optim.Optimizer, weight_decay: float) -> None:
-	for param_group in optimizer.param_groups:
-		param_group["weight_decay"] = weight_decay
-
-
-def _save_checkpoint(output_dir: Path, checkpoint_index: int, sparsity: float, model: torch.nn.Module, phase: str) -> Path:
-	output_dir.mkdir(parents=True, exist_ok=True)
-	checkpoint_path = output_dir / f"checkpoint_{checkpoint_index:02d}_sparsity_{sparsity:.2f}.pth"
-	torch.save(
-		{
-			"model_state_dict": model.state_dict(),
-			"phase": phase,
-			"checkpoint_index": checkpoint_index,
-			"sparsity": sparsity,
-		},
-		checkpoint_path,
+def _build_optimizer(model: torch.nn.Module) -> torch.optim.Optimizer:
+	return torch.optim.Adam(
+		model.parameters(),
+		lr=config.LEARNING_RATE,
+		weight_decay=config.WEIGHT_DECAY,
 	)
-	return checkpoint_path
-
-
 def _train_single_run(run_id: int, train_loader, val_loader, device: torch.device) -> None:
 	run_dir = Path("models") / f"weightdecay_run_{run_id:02d}"
 	run_dir.mkdir(parents=True, exist_ok=True)
 	print(f"[RUN {run_id}] Starting in {run_dir}")
 
 	model = _build_model(device)
-	optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
+	optimizer = _build_optimizer(model)
 
-	# WARMUP
-	config.EPOCHS = config.NUM_PRETRAIN_EPOCHS
-	model, wandb_run = train(
-		model,
-		train_loader,
-		val_loader,
-		optimizer=optimizer,
-		apply_reg=False,
-		is_new_run=True,
-		run_name=f"iterL1_run_{run_id:02d}",
-		weight_decay=True,
-	)
+	wandb_run = None
 
-	sparsity = calculate_real_sparsity(model)
-	_save_checkpoint(run_dir, 0, sparsity, model, "warmup")
-	previous_saved_sparsity = sparsity
-	checkpoint_index = 1
-	_set_optimizer_weight_decay(optimizer, 0.0)
+	while True:
 
-	while sparsity <= MAX_SPARSITY:
-
-		print(f"[RUN {run_id}] Regularization")
-		config.EPOCHS = config.NUM_REG_EPOCHS
 		model, wandb_run = train(
 			model,
 			train_loader,
 			val_loader,
 			optimizer=optimizer,
-			apply_reg=True,
-			is_new_run=False,
+			is_new_run=(wandb_run is None),
 			run_name=f"iterL1_run_{run_id:02d}",
 			run=wandb_run,
 			weight_decay=False,
 		)
 
+		current_real_sparsity = calculate_real_sparsity(model)
 
 
+		if current_real_sparsity >= MAX_SPARSITY:
+			print(f"[RUN {run_id}] Reached target sparsity: {current_real_sparsity:.2f}%")
+			break
 
-		print(f"[RUN {run_id}] Pruning")
 		global_pruning(model, masking=True)
 
-
-
-		print(f"[RUN {run_id}] Recovery")
-		config.EPOCHS = config.NUM_RECOVERY_EPOCHS
-		optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
-		model, wandb_run = train(
-			model,
-			train_loader,
-			val_loader,
-			optimizer=optimizer,
-			apply_reg=False,
-			is_new_run=False,
-			run_name=f"iterL1_run_{run_id:02d}",
-			run=wandb_run,
-			weight_decay=True,
-		)
-
-		sparsity = calculate_real_sparsity(model)
-		if sparsity - previous_saved_sparsity >= SPARSITY_STEP or sparsity >= MAX_SPARSITY:
-			_save_checkpoint(run_dir, checkpoint_index, sparsity, model, "prune_recover")
-			previous_saved_sparsity = sparsity
-			checkpoint_index += 1
-
-		if sparsity >= MAX_SPARSITY:
-			break
+		# Restart cycle with weak regularization and fresh optimizer state.
+		optimizer = _build_optimizer(model)
 
 	if wandb_run is not None:
 		try:

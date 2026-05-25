@@ -44,7 +44,6 @@ def _discover_checkpoints() -> list[Path]:
 
 
 
-
 def main() -> None:
 	print("[SETUP] Loading evaluation data")
 	_, _, test_loader = fetch_cifar10()
