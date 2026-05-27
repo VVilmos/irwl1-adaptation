@@ -80,9 +80,21 @@ def _exponential_decay(start_value, end_value, progress, steepness, center):
     return max(end_value, math.exp(log_value))
 
 
+def _exponential_growth(start_value, end_value, progress, steepness, center):
+    eased_progress = _sigmoid_progress(progress, center, steepness)
+    log_value = math.log(start_value) + eased_progress * (math.log(end_value) - math.log(start_value))
+    return min(end_value, math.exp(log_value))
+
+
 def _linear_growth(start_value, end_value, progress):
     progress = min(max(progress, 0.0), 1.0)
     return start_value + progress * (end_value - start_value)
+
+
+def _quadratic_growth(start_value, end_value, progress):
+    progress = min(max(progress, 0.0), 1.0)
+    eased_progress = progress * progress
+    return start_value + eased_progress * (end_value - start_value)
 
 
 def _default_epsilon_schedule(update_count):
@@ -99,7 +111,24 @@ def _default_epsilon_schedule(update_count):
 def _default_lambda_schedule(update_count):
     growth_steps = getattr(config, "LAMBDA_REG_GROWTH_STEPS", getattr(config, "EPSILON_DECAY_STEPS", 1))
     progress = _normalize_progress(update_count, growth_steps)
-    return _linear_growth(config.LAMBDA_REG_START, config.LAMBDA_REG_END, progress)
+    lambda_start = getattr(config, "LAMBDA_REG_START", 1e-14)
+    lambda_end = config.LAMBDA_REG_END
+    safe_lambda_start = max(1e-30, min(lambda_start, lambda_end))
+
+    lambda_value = _exponential_growth(
+        safe_lambda_start,
+        lambda_end,
+        progress,
+        getattr(config, "LAMBDA_SIGMOID_STEEPNESS", 10),
+        getattr(config, "LAMBDA_SIGMOID_CENTER", 0.5),
+    )
+
+    # Keep the first active regularization below Adam epsilon so optimization remains data-loss dominated.
+    if update_count == 1:
+        first_active_max = getattr(config, "LAMBDA_FIRST_ACTIVE_MAX", getattr(config, "ADAM_EPSILON", 1e-8) * 0.1)
+        lambda_value = min(lambda_value, first_active_max)
+
+    return lambda_value
 
 
 def _advance_epsilon(update_count, epsilon_schedule_fn=None):
@@ -144,6 +173,46 @@ def _init_wandb_run(reg_type, run_name, is_new_run):
     return None
 
 
+def _save_rewind_checkpoint(model, path, epoch, optimizer=None):
+    checkpoint = {
+        "epoch": epoch,
+        "model_state_dict": deepcopy(model.state_dict()),
+    }
+
+    if optimizer is not None:
+        checkpoint["optimizer_state_dict"] = deepcopy(optimizer.state_dict())
+
+    torch.save(checkpoint, path)
+
+
+def rewind_model_to_checkpoint(model, checkpoint_path):
+    checkpoint = torch.load(checkpoint_path, map_location=config.DEVICE)
+    state_dict = checkpoint["model_state_dict"] if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint else checkpoint
+    current_masks = {
+        name: buffer.detach().clone()
+        for name, buffer in model.named_buffers()
+        if name.endswith("mask")
+    }
+
+    model.load_state_dict(state_dict)
+
+    with torch.no_grad():
+        for name, layer in model.named_modules():
+            if _should_skip_module(name):
+                continue
+
+            mask_name = f"{name}.mask" if name else "mask"
+            mask = current_masks.get(mask_name)
+            if mask is None:
+                continue
+
+            layer.mask.copy_(mask)
+            if hasattr(layer, "weight"):
+                layer.weight.mul_(layer.mask.to(layer.weight.dtype))
+
+    return model
+
+
 
 def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_run=True, run=None, run_name="default", weight_decay=False,
                       sparsity_delta_threshold=None, sparsity_patience=None, epsilon_schedule_fn=None, lambda_schedule_fn=None):
@@ -161,11 +230,13 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
 
     epsilon_update_count = 0
     lambda_update_count = 0
-    current_lambda_reg = config.LAMBDA_REG_START
-    current_epsilon = config.EPSILON_START
+    current_lambda_reg = config.LAMBDA_REG_END if not config.IS_LAMBDA_RISE else config.LAMBDA_REG_START
+    current_epsilon = config.EPSILON_END if not config.IS_EPSILON_DECAY else config.EPSILON_START
     sparsity_delta_threshold = config.THRESHOLDED_SPARSITY_MIN_DELTA if sparsity_delta_threshold is None else sparsity_delta_threshold
     sparsity_patience = config.SPAR_PATIENCE if sparsity_patience is None else sparsity_patience
-    config.EPSILON = config.EPSILON_START
+    config.EPSILON = config.EPSILON_END if not config.IS_EPSILON_DECAY else config.EPSILON_START
+    if not config.IS_EPSILON_DECAY:
+        current_epsilon = config.EPSILON_END
 
     if is_new_run:
         run = _init_wandb_run(config.REG_TYPE, run_name, is_new_run)
@@ -176,8 +247,8 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
     for epoch in range(config.MAX_EPOCHS):
         model.train()
         # advance lambda once per epoch (slower growth)
-        lambda_update_count += 1
-        current_lambda_reg = _advance_lambda(lambda_update_count, lambda_schedule_fn)
+        if config.IS_LAMBDA_RISE:
+            lambda_update_count += 1
         total_train_loss = 0
 
         for batch_index, (inputs, targets) in enumerate(train_loader):
@@ -192,8 +263,14 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
                     batch_number = batch_index + 1
 
                     if batch_number in update_batches:
-                        epsilon_update_count += 1
-                        current_epsilon = _advance_epsilon(epsilon_update_count, epsilon_schedule_fn)
+                        if config.IS_EPSILON_DECAY:
+                            epsilon_update_count += 1
+                            current_epsilon = _advance_epsilon(epsilon_update_count, epsilon_schedule_fn)
+                        else:
+                            current_epsilon = config.EPSILON_END
+
+                        # Always update WL1 penalties at the scheduled update batches,
+                        # even if epsilon decay is disabled — use the current_epsilon value.
                         L1_penalty_update(model, current_epsilon)
 
                     reg_loss = current_lambda_reg * calculate_WL1_norm(model)
@@ -211,6 +288,10 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
             total_train_loss += data_loss.item()
             optimizer.step()
 
+        if config.IS_LAMBDA_RISE:
+            current_lambda_reg = _advance_lambda(lambda_update_count, lambda_schedule_fn)
+        else:
+            current_lambda_reg = config.LAMBDA_REG_END
         avg_train_loss = total_train_loss / total_num_batches
         current_val_loss, val_acc = validate(model, val_loader)
         current_thresholded_sparsity = calculate_thresholded_sparsity(model)
@@ -242,12 +323,14 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
         if should_stop:
             break
 
-    print(f"Ended regularization after {epoch}")
+    num_epochs = epoch + 1
+    print(f"Ended regularization after {num_epochs} epochs")
 
-    return model, run
+    return model, run, num_epochs
 
 
-def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run=None, run_name="default", weight_decay=False):
+def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run=None, run_name="default", weight_decay=False,
+          rewind=False, rewind_checkpoint_path=None, rewind_epoch=None):
     criterion = torch.nn.CrossEntropyLoss()
     if optimizer is None:
         optimizer_kwargs = {"lr": config.LEARNING_RATE}
@@ -265,6 +348,8 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
         run = _init_wandb_run(config.REG_TYPE, run_name, is_new_run)
 
     total_num_batches = len(train_loader)
+    rewind_epoch = config.REWIND_EPOCH if rewind_epoch is None else rewind_epoch
+    rewind_checkpoint_saved = False
 
     for epoch in range(config.MAX_EPOCHS):
         model.train()
@@ -286,6 +371,11 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
         current_val_loss, val_acc = validate(model, val_loader)
         current_thresholded_sparsity = calculate_thresholded_sparsity(model)
         current_real_sparsity = calculate_real_sparsity(model)
+
+        if rewind and (not rewind_checkpoint_saved) and ((epoch + 1) == rewind_epoch) and (rewind_checkpoint_path is not None):
+            _save_rewind_checkpoint(model, rewind_checkpoint_path, epoch + 1, optimizer=optimizer)
+            rewind_checkpoint_saved = True
+            print(f"Saved rewind checkpoint at epoch {epoch + 1} to {rewind_checkpoint_path}")
 
         if run is not None:
             run.log({
@@ -313,9 +403,13 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
     if best_optimizer_state is not None:
         optimizer.load_state_dict(best_optimizer_state)
 
-    print(f"Ended training after {epoch}")
+    num_epochs = epoch + 1
+    print(f"Ended training after {num_epochs} epochs")
 
-    return model, run
+    if rewind and not rewind_checkpoint_saved:
+        print(f"Warning: rewind checkpoint was not saved because training ended before epoch {rewind_epoch}")
+
+    return model, run, num_epochs
 
 
 def _evaluate_loader(model, data_loader):
