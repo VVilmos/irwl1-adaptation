@@ -9,29 +9,23 @@ import irwl1.config as config
 from irwl1.data import fetch_cifar10
 from irwl1.model import ResNet20
 from irwl1.regularization import L1_penalty_init
-from irwl1.utils import calculate_real_sparsity, calculate_thresholded_sparsity, global_pruning, init_mask, train
+from irwl1.utils import calculate_real_sparsity, train_regularized, global_pruning, init_mask, train, zero_pruned_optimizer_state
 
 
 MAX_SPARSITY = 95.0
-SPARSITY_STALL_PATIENCE = 9
-MIN_SPARSITY_IMPROVEMENT = 0.0
-MAX_NO_PROGRESS_PRUNES = 3
 
 
 def _configure_training() -> None:
 	config.WEIGHT_PRUNING_THRESHOLD = 1e-5
 	config.EPSILON = config.EPSILON_START
 
-	# Update penalties once per epoch and decay epsilon on the same cadence.
 	config.UPDATE_PER_EPOCH = 1
-	config.PATIENCE = SPARSITY_STALL_PATIENCE
 
 	config.MODE = "weight-wise"
 	config.REG_TYPE = "WL1"
 	config.MODEL = "ResNet20"
 	config.WANDB_MODE = "online"
 	config.WEIGHT_DECAY = 1e-4
-	config.LAMBDA_REG = 0.01
 	config.LEARNING_RATE = 0.001
 
 
@@ -64,13 +58,15 @@ def _build_optimizer(model: torch.nn.Module) -> torch.optim.Optimizer:
 		lr=config.LEARNING_RATE,
 		weight_decay=config.WEIGHT_DECAY,
 	)
+
 def _train_single_run(run_id: int, train_loader, val_loader, device: torch.device) -> None:
-	run_dir = Path("models") / f"weightdecay_run_{run_id:02d}"
+	run_dir = Path("models") / f"epsdecay_{run_id:02d}"
 	run_dir.mkdir(parents=True, exist_ok=True)
 	print(f"[RUN {run_id}] Starting in {run_dir}")
 
 	model = _build_model(device)
 	optimizer = _build_optimizer(model)
+	current_real_sparsity = calculate_real_sparsity(model)
 
 	wandb_run = None
 
@@ -86,18 +82,30 @@ def _train_single_run(run_id: int, train_loader, val_loader, device: torch.devic
 			run=wandb_run,
 			weight_decay=False,
 		)
+		
 
 		current_real_sparsity = calculate_real_sparsity(model)
 
-
+		state_dict = model.state_dict()
+		checkpoint_path = run_dir / f"checkpoint_spar{current_real_sparsity:.2f}_run{run_id}.pth"
+		torch.save(state_dict, checkpoint_path)
 		if current_real_sparsity >= MAX_SPARSITY:
 			print(f"[RUN {run_id}] Reached target sparsity: {current_real_sparsity:.2f}%")
 			break
 
-		global_pruning(model, masking=True)
+		model, wandb_run = train_regularized(
+			model,
+			train_loader,
+			val_loader,
+			optimizer=optimizer,
+			is_new_run=False,
+			run_name=f"iterL1_run_{run_id:02d}",
+			run=wandb_run,
+			weight_decay=False,
+		)
 
-		# Restart cycle with weak regularization and fresh optimizer state.
-		optimizer = _build_optimizer(model)
+		global_pruning(model, masking=True)
+		zero_pruned_optimizer_state(model, optimizer)
 
 	if wandb_run is not None:
 		try:

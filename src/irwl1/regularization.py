@@ -86,7 +86,7 @@ def L1_penalty_init(model):
         elif type(layer) == nn.Linear:
           layer.penalty = torch.ones(layer.weight.shape, device=config.DEVICE, requires_grad=False)
 
-def L1_penalty_update(model):
+def L1_penalty_update(model, epsilon):
     with torch.no_grad():
       for name, layer in model.named_modules():
         if _should_skip_module(name):
@@ -95,15 +95,15 @@ def L1_penalty_update(model):
         if type(layer)  == nn.Conv2d:
           match(config.MODE):
             case "weight-wise":
-              layer.penalty = 1 / (layer.weight.abs() + config.EPSILON)
+              layer.penalty = 1 / (layer.weight.abs() + epsilon)
             case "kernel-wise":
-              layer.penalty = 1 / (layer.weight.pow(2).sum(dim=(2, 3)).sqrt() + config.EPSILON)
+              layer.penalty = 1 / (layer.weight.pow(2).sum(dim=(2, 3)).sqrt() + epsilon)
             case "channel-wise":
-              layer.penalty = 1 / (layer.weight.pow(2).sum(dim=(1, 2, 3)).sqrt() + config.EPSILON)
+              layer.penalty = 1 / (layer.weight.pow(2).sum(dim=(1, 2, 3)).sqrt() + epsilon)
           if hasattr(layer, "mask"):
             layer.penalty = layer.penalty * (layer.mask > 0)
         elif type(layer) == nn.Linear:
-          layer.penalty = 1 / (layer.weight.abs() + config.EPSILON)
+          layer.penalty = 1 / (layer.weight.abs() + epsilon)
           if hasattr(layer, "mask"):
             layer.penalty = layer.penalty * (layer.mask > 0)
 
