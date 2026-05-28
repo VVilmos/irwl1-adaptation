@@ -18,12 +18,13 @@ MAX_SPARSITY = 90.0
 
 def _configure_training() -> None:
 	config.WEIGHT_PRUNING_THRESHOLD = 1e-5
+	config.KERNEL_PRUNING_THRESHOLD = 2e-5
+	config.MODE = "kernel-wise"
 	config.EPSILON = config.EPSILON_START
-	config.UPDATE_PER_EPOCH = 1
-	config.MODE = "weight-wise"
+	config.UPDATE_INTERVAL = 2
 	config.REG_TYPE = "WL1"
 	config.MODEL = "ResNet20"
-	config.WANDB_MODE = "offline"
+	config.WANDB_MODE = "online"
 	config.WEIGHT_DECAY = 1e-4
 	config.LEARNING_RATE = 0.001
 	config.REWIND_EPOCH = 4
@@ -37,7 +38,8 @@ def _parse_args() -> argparse.Namespace:
 	parser.add_argument("--no-rewind", dest="rewind", action="store_false", help="Disable weight rewinding")
 	parser.add_argument("--smooth", dest="smooth", action="store_true", help="Enable smooth schedules for epsilon and lambda")
 	parser.add_argument("--static", dest="smooth", action="store_false", help="Disable smooth schedules (static epsilon/lambda)")
-	parser.set_defaults(rewind=config.REWIND, smooth=False)
+	parser.add_argument("--offline", dest="offline", action="store_true", help="Disable smooth schedules (static epsilon/lambda)")
+	parser.set_defaults(rewind=config.REWIND, smooth=True, offline=False)
 	return parser.parse_args()
 
 
@@ -188,6 +190,7 @@ def main() -> None:
 	config.REWIND = args.rewind
 	config.IS_EPSILON_DECAY = args.smooth
 	config.IS_LAMBDA_RISE = args.smooth
+	config.WANDB_MODE = "offline" if args.offline else "online"
 	Path("models").mkdir(parents=True, exist_ok=True)
 	Path("results").mkdir(parents=True, exist_ok=True)
 

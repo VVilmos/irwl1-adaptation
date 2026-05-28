@@ -1,0 +1,309 @@
+@article{lenet,
+author = {Lecun, Yann and Yere, Yere and Haffner, Patrick and Rachmad, Yoesoep and Bottou, Leon},
+year = {1998},
+month = {12},
+pages = {2278 - 2324},
+title = {Gradient-Based Learning Applied to Document Recognition},
+volume = {86},
+journal = {Proceedings of the IEEE},
+doi = {10.1109/5.726791}
+}
+
+@misc{boyd,
+      title={Enhancing Sparsity by Reweighted L1 Minimization}, 
+      author={Emmanuel J. Candes and Michael B. Wakin and Stephen P. Boyd},
+      year={2007},
+      eprint={0711.1612},
+      archivePrefix={arXiv},
+      primaryClass={stat.ME},
+      url={https://arxiv.org/abs/0711.1612}, 
+}
+@misc{survey,
+      title={An Overview of Neural Network Compression}, 
+      author={James O' Neill},
+      year={2020},
+      eprint={2006.03669},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2006.03669}, 
+}
+@INPROCEEDINGS{unifiedDNNpruning,
+  author={Zhang, Tianyun and Ma, Xiaolong and Zhan, Zheng and Zhou, Shanglin and Ding, Caiwen and Fardad, Makan and Wang, Yanzhi},
+  booktitle={2021 58th ACM/IEEE Design Automation Conference (DAC)}, 
+  title={A Unified DNN Weight Pruning Framework Using Reweighted Optimization Methods}, 
+  year={2021},
+  volume={},
+  number={},
+  pages={493-498},
+  keywords={Degradation;Training;Deep learning;Design automation;Computational modeling;Optimization methods},
+  doi={10.1109/DAC18074.2021.9586152}}
+@article{effnet,
+  author       = {Mingxing Tan and
+                  Quoc V. Le},
+  title        = {EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks},
+  journal      = {CoRR},
+  volume       = {abs/1905.11946},
+  year         = {2019},
+  url          = {http://arxiv.org/abs/1905.11946},
+  eprinttype    = {arXiv},
+  eprint       = {1905.11946},
+  timestamp    = {Mon, 03 Jun 2019 13:42:33 +0200},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-1905-11946.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@Article{structured,
+AUTHOR = {Sui, Xuefu and Lv, Qunbo and Zhi, Liangjie and Zhu, Baoyu and Yang, Yuanbo and Zhang, Yu and Tan, Zheng},
+TITLE = {A Hardware-Friendly High-Precision CNN Pruning Method and Its FPGA Implementation},
+JOURNAL = {Sensors},
+VOLUME = {23},
+YEAR = {2023},
+NUMBER = {2},
+ARTICLE-NUMBER = {824},
+URL = {https://www.mdpi.com/1424-8220/23/2/824},
+PubMedID = {36679624},
+ISSN = {1424-8220},
+ABSTRACT = {To address the problems of large storage requirements, computational pressure, untimely data supply of off-chip memory, and low computational efficiency during hardware deployment due to the large number of convolutional neural network (CNN) parameters, we developed an innovative hardware-friendly CNN pruning method called KRP, which prunes the convolutional kernel on a row scale. A new retraining method based on LR tracking was used to obtain a CNN model with both a high pruning rate and accuracy. Furthermore, we designed a high-performance convolutional computation module on the FPGA platform to help deploy KRP pruning models. The results of comparative experiments on CNNs such as VGG and ResNet showed that KRP has higher accuracy than most pruning methods. At the same time, the KRP method, together with the GSNQ quantization method developed in our previous study, forms a high-precision hardware-friendly network compression framework that can achieve “lossless” CNN compression with a 27× reduction in network model storage. The results of the comparative experiments on the FPGA showed that the KRP pruning method not only requires much less storage space, but also helps to reduce the on-chip hardware resource consumption by more than half and effectively improves the parallelism of the model in FPGAs with a strong hardware-friendly feature. This study provides more ideas for the application of CNNs in the field of edge computing.},
+DOI = {10.3390/s23020824}
+}
+@article{logsum,
+author = {Zha, Zhiyuan and Zhang, Xinggan and Liu, Xin and Zhou, Ziheng and Shi, Jingang and Lan, Shouren and Chen, Yang and Bai, Yechao and Wang, Qiong and Tang, Lan},
+year = {2016},
+month = {08},
+pages = {},
+title = {Image Restoration using Group Sparse Representation via Weighted Nuclear Norm Minimization},
+doi = {10.48550/arXiv.1608.04517}
+}
+@book{Goodfellow,
+    title={Deep Learning},
+    author={Ian Goodfellow and Yoshua Bengio and Aaron Courville},
+    publisher={MIT Press},
+    note={\url{http://www.deeplearningbook.org}},
+    year={2016}
+}
+@article{winningticket,
+  author       = {Jonathan Frankle and
+                  Michael Carbin},
+  title        = {The Lottery Ticket Hypothesis: Training Pruned Neural Networks},
+  journal      = {CoRR},
+  volume       = {abs/1803.03635},
+  year         = {2018},
+  url          = {http://arxiv.org/abs/1803.03635},
+  eprinttype    = {arXiv},
+  eprint       = {1803.03635},
+  timestamp    = {Mon, 13 Aug 2018 16:48:29 +0200},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-1803-03635.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+@article{proximalalgs, 
+author = {Parikh, Neal and Boyd, Stephen},
+title = {Proximal Algorithms},
+year = {2014},
+issue_date = {Jan 2014},
+publisher = {Now Publishers Inc.},
+address = {Hanover, MA, USA},
+volume = {1},
+number = {3},
+issn = {2167-3888},
+url = {https://doi.org/10.1561/2400000003},
+doi = {10.1561/2400000003},
+abstract = {This monograph is about a class of optimization algorithms called proximal algorithms. Much like Newton’s method is a  standard tool for solving unconstrained smooth optimization problems of modest size, proximal algorithms can be viewed as an analogous  tool for nonsmooth, constrained, large-scale, or distributed versions of these problems. They are very generally applicable, but are  especially well-suited to problems of substantial recent interest involving large or high-dimensional datasets. Proximal methods sit at  a higher level of abstraction than classical algorithms like Newton’s method: the base operation is evaluating the proximal operator of a  function, which itself involves solving a small convex optimization problem. These subproblems, which generalize the problem of projecting  a point onto a convex set, often admit closed-form solutions or can be solved very quickly with standard or simple specialized methods. Here,  we discuss the many different interpretations of proximal operators and algorithms, describe their connections to many other topics in  optimization and applied mathematics, survey some popular algorithms, and provide a large number of examples of proximal operators that  commonly arise in practice.},
+journal = {Found. Trends Optim.},
+month = jan,
+pages = {127–239},
+numpages = {116}
+}
+@INPROCEEDINGS{formanek,
+  author={Formanek, András and Hadházi, Dániel},
+  booktitle={2019 International Conference on Control, Artificial Intelligence, Robotics & Optimization (ICCAIRO)}, 
+  title={Compressing Convolutional Neural Networks by L0 Regularization}, 
+  year={2019},
+  volume={},
+  number={},
+  pages={155-162},
+  keywords={Training;Neural networks;Cost function;Kernel;Minimization;Market research;compressed sensing;pruning;regularization;L0 minimization;sparsifying regularization},
+  doi={10.1109/ICCAIRO47923.2019.00032}}
+@misc{fashionmnist,
+      title={Fashion-MNIST: a Novel Image Dataset for Benchmarking Machine Learning Algorithms}, 
+      author={Han Xiao and Kashif Rasul and Roland Vollgraf},
+      year={2017},
+      eprint={1708.07747},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/1708.07747}, 
+}
+@inproceedings{optimalbraindamage,
+ author = {LeCun, Yann and Denker, John and Solla, Sara},
+ booktitle = {Advances in Neural Information Processing Systems},
+ editor = {D. Touretzky},
+ pages = {},
+ publisher = {Morgan-Kaufmann},
+ title = {Optimal Brain Damage},
+ url = {https://proceedings.neurips.cc/paper_files/paper/1989/file/6c9882bbac1c7093bd25041881277658-Paper.pdf},
+ volume = {2},
+ year = {1989}
+}
+
+@article{edgeai,
+title = {Edge AI: A survey},
+journal = {Internet of Things and Cyber-Physical Systems},
+volume = {3},
+pages = {71-92},
+year = {2023},
+issn = {2667-3452},
+doi = {https://doi.org/10.1016/j.iotcps.2023.02.004},
+url = {https://www.sciencedirect.com/science/article/pii/S2667345223000196},
+author = {Raghubir Singh and Sukhpal Singh Gill},
+keywords = {Edge AI, Edge computing, Artificial intelligence, Fog computing, Machine learning, Cloud computing},
+abstract = {Artificial Intelligence (AI) at the edge is the utilization of AI in real-world devices. Edge AI refers to the practice of doing AI computations near the users at the network's edge, instead of centralised location like a cloud service provider's data centre. With the latest innovations in AI efficiency, the proliferation of Internet of Things (IoT) devices, and the rise of edge computing, the potential of edge AI has now been unlocked. This study provides a thorough analysis of AI approaches and capabilities as they pertain to edge computing, or Edge AI. Further, a detailed survey of edge computing and its paradigms including transition to Edge AI is presented to explore the background of each variant proposed for implementing Edge Computing. Furthermore, we discussed the Edge AI approach to deploying AI algorithms and models on edge devices, which are typically resource-constrained devices located at the edge of the network. We also presented the technology used in various modern IoT applications, including autonomous vehicles, smart homes, industrial automation, healthcare, and surveillance. Moreover, the discussion of leveraging machine learning algorithms optimized for resource-constrained environments is presented. Finally, important open challenges and potential research directions in the field of edge computing and edge AI have been identified and investigated. We hope that this article will serve as a common goal for a future blueprint that will unite important stakeholders and facilitates to accelerate development in the field of Edge AI.}
+}
+
+
+@ARTICLE{pruning_survey24,
+  author={Cheng, Hongrong and Zhang, Miao and Shi, Javen Qinfeng},
+  journal={IEEE Transactions on Pattern Analysis and Machine Intelligence}, 
+  title={A Survey on Deep Neural Network Pruning: Taxonomy, Comparison, Analysis, and Recommendations}, 
+  year={2024},
+  volume={46},
+  number={12},
+  pages={10558-10578},
+  keywords={Training;Neural networks;Artificial neural networks;Surveys;Taxonomy;Reviews;Computational modeling;Deep neural network pruning;model compression;model acceleration;large language models;vision transformers;large multimodal models;diffusion models;edge devices},
+  doi={10.1109/TPAMI.2024.3447085}}
+ 
+@article{effectofadvtraining,
+  author       = {Klim Kireev and
+                  Maksym Andriushchenko and
+                  Nicolas Flammarion},
+  title        = {On the effectiveness of adversarial training against common corruptions},
+  journal      = {CoRR},
+  volume       = {abs/2103.02325},
+  year         = {2021},
+  url          = {https://arxiv.org/abs/2103.02325},
+  eprinttype   = {arXiv},
+  eprint       = {2103.02325},
+  timestamp    = {Thu, 04 Mar 2021 17:00:40 +0100},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-2103-02325.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@article{cards,
+  author       = {James Diffenderfer and
+                  Brian R. Bartoldson and
+                  Shreya Chaganti and
+                  Jize Zhang and
+                  Bhavya Kailkhura},
+  title        = {A Winning Hand: Compressing Deep Networks Can Improve Out-Of-Distribution
+                  Robustness},
+  journal      = {CoRR},
+  volume       = {abs/2106.09129},
+  year         = {2021},
+  url          = {https://arxiv.org/abs/2106.09129},
+  eprinttype   = {arXiv},
+  eprint       = {2106.09129},
+  timestamp    = {Tue, 29 Jun 2021 16:55:04 +0200},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-2106-09129.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@article{oodgeneralization,
+  author       = {Zheyan Shen and
+                  Jiashuo Liu and
+                  Yue He and
+                  Xingxuan Zhang and
+                  Renzhe Xu and
+                  Han Yu and
+                  Peng Cui},
+  title        = {Towards Out-Of-Distribution Generalization: {A} Survey},
+  journal      = {CoRR},
+  volume       = {abs/2108.13624},
+  year         = {2021},
+  url          = {https://arxiv.org/abs/2108.13624},
+  eprinttype   = {arXiv},
+  eprint       = {2108.13624},
+  timestamp    = {Fri, 09 Feb 2024 20:35:50 +0100},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-2108-13624.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@article{adversarial_survey,
+	author = {{XU, Keyizhi} and {LU, Yajuan} and {WANG, Zhongyuan} and {LIANG, Chao}},
+	title = {A Survey of Adversarial Examples in Computer Vision: Attack, Defense, and Beyond},
+	DOI= "10.1051/wujns/2025301001",
+	url= "https://doi.org/10.1051/wujns/2025301001",
+	journal = {Wuhan Univ. J. Nat. Sci.},
+	year = 2025,
+	volume = 30,
+	number = 1,
+	pages = "1-20",
+}
+
+@techreport{cifar10,
+  title       = {Learning Multiple Layers of Features from Tiny Images},
+  author      = {Krizhevsky, Alex},
+  institution = {University of Toronto},
+  year        = {2009},
+  type        = {Technical Report},
+  url         = {https://www.cs.toronto.edu/~kriz/learning-features-2009-TR.pdf}
+}
+
+@article{cifar10c,
+  author       = {Dan Hendrycks and
+                  Thomas G. Dietterich},
+  title        = {Benchmarking Neural Network Robustness to Common Corruptions and Perturbations},
+  journal      = {CoRR},
+  volume       = {abs/1903.12261},
+  year         = {2019},
+  url          = {http://arxiv.org/abs/1903.12261},
+  eprinttype   = {arXiv},
+  eprint       = {1903.12261},
+  timestamp    = {Tue, 02 Apr 2019 12:29:45 +0200},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-1903-12261.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@article{fab,
+  author       = {Francesco Croce and
+                  Matthias Hein},
+  title        = {Minimally distorted Adversarial Examples with a Fast Adaptive Boundary
+                  Attack},
+  journal      = {CoRR},
+  volume       = {abs/1907.02044},
+  year         = {2019},
+  url          = {http://arxiv.org/abs/1907.02044},
+  eprinttype   = {arXiv},
+  eprint       = {1907.02044},
+  timestamp    = {Mon, 08 Jul 2019 14:12:33 +0200},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-1907-02044.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+
+@misc{pgd,
+      title={Towards Deep Learning Models Resistant to Adversarial Attacks}, 
+      author={Aleksander Madry and Aleksandar Makelov and Ludwig Schmidt and Dimitris Tsipras and Adrian Vladu},
+      year={2019},
+      eprint={1706.06083},
+      archivePrefix={arXiv},
+      primaryClass={stat.ML},
+      url={https://arxiv.org/abs/1706.06083}, 
+}
+
+
+
+@article{fourier_analysis,
+  author       = {Dong Yin and
+                  Raphael Gontijo Lopes and
+                  Jonathon Shlens and
+                  Ekin D. Cubuk and
+                  Justin Gilmer},
+  title        = {A Fourier Perspective on Model Robustness in Computer Vision},
+  journal      = {CoRR},
+  volume       = {abs/1906.08988},
+  year         = {2019},
+  url          = {http://arxiv.org/abs/1906.08988},
+  eprinttype   = {arXiv},
+  eprint       = {1906.08988},
+  timestamp    = {Mon, 24 Jun 2019 17:28:45 +0200},
+  biburl       = {https://dblp.org/rec/journals/corr/abs-1906-08988.bib},
+  bibsource    = {dblp computer science bibliography, https://dblp.org}
+}
+

@@ -5,34 +5,19 @@ from pathlib import Path
 import pandas as pd
 import torch
 
-import irwl1.config as config
 from irwl1.data import fetch_cifar10, fetch_cifar10_test_mini
-from irwl1.model import ResNet20
-from irwl1.regularization import L1_penalty_init
+from irwl1.eval_utils import configure_evaluation, load_model_from_checkpoint
 from irwl1.robust import evaluate_cifar10c_per_corruption, fab_norm
-from irwl1.utils import init_mask, test
+from irwl1.utils import test
 
 
-def _configure_evaluation() -> None:
-	config.WEIGHT_PRUNING_THRESHOLD = 1e-5
-	config.EPSILON = 1e-6
-	config.UPDATE_PER_EPOCH = 1
-	config.MODE = "weight-wise"
-	config.REG_TYPE = "WL1"
-	config.MODEL = "ResNet20"
-	config.WANDB_MODE = "offline"
-	config.FAB_STEPS = 10
-	config.WEIGHT_DECAY = 0.0
-
-
-def _load_model_from_checkpoint(checkpoint_path: Path, device: torch.device) -> tuple[torch.nn.Module, dict]:
-	model = ResNet20().to(device)
-	L1_penalty_init(model)
-	init_mask(model)
-	checkpoint = torch.load(checkpoint_path, map_location=device)
-	state_dict = checkpoint.get("model_state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
-	model.load_state_dict(state_dict)
-	return model, checkpoint if isinstance(checkpoint, dict) else {}
+def _evaluate_mean_corrupted_error(model, cifar10c_root: str, device: torch.device) -> dict[str, float]:
+	corruption_accuracies = evaluate_cifar10c_per_corruption(model, cifar10c_root, device=device)
+	mean_accuracy = sum(corruption_accuracies.values()) / len(corruption_accuracies)
+	return {
+		"cifar10c_mean_accuracy": mean_accuracy,
+		"cifar10c_mean_error": 100.0 - mean_accuracy,
+	}
 
 
 def _discover_checkpoints() -> list[Path]:
@@ -52,7 +37,7 @@ def main() -> None:
 	cifar10c_root = "data/CIFAR-10-C"
 	output_path = Path("results") / "resnet20_weightdecay_checkpoint_evaluations.csv"
 	output_path.parent.mkdir(parents=True, exist_ok=True)
-	_configure_evaluation()
+	configure_evaluation()
 
 	rows: list[dict[str, object]] = []
 	checkpoints = _discover_checkpoints()
@@ -61,7 +46,7 @@ def main() -> None:
 
 	for checkpoint_path in checkpoints:
 		print(f"[EVAL] {checkpoint_path}")
-		model, checkpoint = _load_model_from_checkpoint(checkpoint_path, device)
+		model, checkpoint = load_model_from_checkpoint(checkpoint_path, device)
 		_, test_accuracy = test(model, test_loader)
 		fab_accuracy, fab_norm_value = fab_norm(model, mini_test_loader, device=device)
 		cifar10c_results = _evaluate_mean_corrupted_error(model, cifar10c_root, device)

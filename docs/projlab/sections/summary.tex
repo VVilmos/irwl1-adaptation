@@ -1,0 +1,13 @@
+\section{Summary}
+
+To sum up, the presented methods for measuring the impact of pruning on OOD and adversarial robustness of a neural network
+showed that the proposed gradual magnitude-based pruning strategy does not reshape the model's robustness features. Evaluation on the CIFAR-10-C dataset
+indicated that the pruned models did not get more vulnerable to common corruptions than the original dense model. Furthermore, when examining the progression
+of the Fourier sensitivity heatmaps during the pruning process, no significant change could be detected in the model's robustness to 
+perturbations of different frequencies and orientations, except at extreme sparsity levels. However, the distance to the decision boundary
+- approximated by the norm of the minimal adversarial perturbation found by the FAB attack - gradually decreased as sparsity levels increased. Based on these
+results, we hypothesize that our pruning process only decreases robustness to adversarial inputs, while maintains the OOD robustness of the model.
+
+While the proposed pruning method did not worsen the OOD robustness, research suggests that model compression techniques like pruning
+can be enhanced to contribute to robustness targets as well during training. Therefore, future work is needed to find modifications of this specific
+pruning method to improve upon robustness, accuracy and compactness simultaneously.   

@@ -1,0 +1,92 @@
+\documentclass[12pt]{article}
+\renewcommand{\thesection}{\arabic{section}}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{svg}
+\usepackage{listings}
+\usepackage{dirtree}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{caption}  
+\usepackage{amsmath}
+\usepackage{multirow}   % For merging cells vertically in the category column
+\usepackage{tabularx}   % For auto-wrapping text columns to fit page width
+\geometry{margin=1in}
+
+\geometry{
+    top=1in,
+    bottom=1in
+}
+
+
+\graphicspath{{images/}}
+
+\lstset{
+  language=HTML,
+  basicstyle=\ttfamily,
+  keywordstyle=\color{blue},
+  commentstyle=\color{green},
+  stringstyle=\color{red},
+  showstringspaces=false
+}
+
+
+\begin{document}
+\pagestyle{fancy}
+\fancyhead[L]{Compressing Neural Networks via Regularization}
+\fancyhead[R]{Vilmos Vörös}
+
+%Title page
+\begin{titlepage} 
+    \centering
+    \vspace*{\fill}
+    
+    {\large Compressing Neural Networks via Regularization} \\[2cm]
+    {Vilmos Vörös, HW921K} \\[1cm]
+    {\today}
+
+    \vspace*{\fill}
+
+\end{titlepage} 
+
+\tableofcontents
+
+\pagebreak
+
+
+\input{sections/introduction.tex}
+
+\input{sections/background.tex}
+
+\input{sections/methodology.tex}
+\input{sections/exp.tex}
+\input{sections/summary.tex}
+
+
+\bibliography{References}
+\bibliographystyle{ieeetr}
+
+\appendix
+\section{Appendix}\label{sec:appendix}
+\begin{table}[h]
+\centering
+\caption{Hyperparameter Configuration for Training}
+\label{tab:training_params}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Optimizer & Adam \\
+Learning Rate & $1 \times 10^{-3}$ \\
+Batch Size & 64 \\
+Early Stopping Patience & 8 \\
+Loss Function & Cross-Entropy \\
+Activation & ReLU \\
+Weight initialization & Uniform Xavier \\
+\bottomrule
+\end{tabular}
+\end{table}
+\end{document}

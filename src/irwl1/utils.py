@@ -16,21 +16,52 @@ def _should_skip_module(name):
 
 
 def calculate_thresholded_sparsity(model):
-    threshold = config.WEIGHT_PRUNING_THRESHOLD
-    num_total_weights, num_zero_weights = 0, 0
+    match(config.MODE):
+        case "weight-wise":
+            threshold = config.WEIGHT_PRUNING_THRESHOLD
+            num_total_weights, num_zero_weights = 0, 0
 
-    for name, layer in model.named_modules():
-        if _should_skip_module(name):
-            continue
+            for name, layer in model.named_modules():
+                if _should_skip_module(name):
+                    continue
 
-        if type(layer) in [nn.Conv2d, nn.Linear]:
-            num_total_weights += torch.numel(layer.weight)
-            num_zero_weights += torch.sum(torch.abs(layer.weight) < threshold).item()
+                if type(layer) in [nn.Conv2d, nn.Linear]:
+                    num_total_weights += torch.numel(layer.weight)
+                    num_zero_weights += torch.sum(torch.abs(layer.weight) < threshold).item()
 
-    if num_total_weights == 0:
-        return 0.0
+            if num_total_weights == 0:
+                return 0.0
+            return num_zero_weights / num_total_weights * 100
 
-    return num_zero_weights / num_total_weights * 100
+        case "kernel-wise":
+            threhold = config.KERNEL_PRUNING_THRESHOLD
+            num_total_kernels, num_zero_kernels = 0, 0
+            for name, layer in model.named_modules():
+                if _should_skip_module(name):
+                    continue
+
+                if type(layer) == nn.Conv2d:
+                    kernel_amplitude = torch.sqrt(torch.pow(layer.weight, 2).sum(dim=[2, 3]))
+                    num_total_kernels += kernel_amplitude.numel()
+                    num_zero_kernels += torch.sum(kernel_amplitude < threhold).item()
+            if num_total_kernels == 0:
+                return 0.0
+            return num_zero_kernels / num_total_kernels * 100  
+
+        case "channel-wise":
+            threhold = config.CHANNEL_PRUNING_THRESHOLD
+            num_total_channels, num_zero_channels = 0, 0
+            for name, layer in model.named_modules():
+                if _should_skip_module(name):
+                    continue
+
+                if type(layer) == nn.Conv2d:
+                    channel_amplitude = torch.sqrt(torch.pow(layer.weight, 2).sum(dim=[1, 2, 3]))
+                    num_total_channels += channel_amplitude.numel()
+                    num_zero_channels += torch.sum(channel_amplitude < threhold).item()
+            if num_total_channels == 0:
+                return 0.0 
+            return num_zero_channels / num_total_channels * 100
 
 
 def calculate_real_sparsity(model):
@@ -50,15 +81,14 @@ def calculate_real_sparsity(model):
     return num_zero_weights / num_total_weights * 100
 
 
-def _regularization_update_batches(num_batches):
+def _regularization_update_batches(num_batches, num_updates):
     update_batches = set()
 
-    for update_index in range(1, config.UPDATE_PER_EPOCH + 1):
-        batch_number = math.ceil(update_index * num_batches / (config.UPDATE_PER_EPOCH + 1))
+    for update_index in range(1, num_updates + 1):
+        batch_number = math.ceil(update_index * num_batches / (num_updates + 1))
         update_batches.add(min(max(batch_number, 1), num_batches))
 
     return update_batches
-
 
 def _normalize_progress(step_count, total_steps):
     return min(max(step_count / max(1, total_steps), 0.0), 1.0)
@@ -166,7 +196,7 @@ def _init_wandb_run(reg_type, run_name, is_new_run):
     if reg_type == "L1":
         return wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_lambda{round(config.LAMBDA_REG, 3)}", mode=config.WANDB_MODE)
     if reg_type == "WL1":
-        return wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_threshold{config.WEIGHT_PRUNING_THRESHOLD}_updatefreq{config.UPDATE_PER_EPOCH}_eps{config.EPSILON}", mode=config.WANDB_MODE)
+        return wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_threshold{config.WEIGHT_PRUNING_THRESHOLD}_updateint{config.UPDATE_INTERVAL}_eps{config.EPSILON}", mode=config.WANDB_MODE)
     if reg_type == "None":
         return wandb.init(project=f"pre_pruning_tests_{config.MODEL}", name=run_name, mode=config.WANDB_MODE)
 
@@ -183,6 +213,19 @@ def _save_rewind_checkpoint(model, path, epoch, optimizer=None):
         checkpoint["optimizer_state_dict"] = deepcopy(optimizer.state_dict())
 
     torch.save(checkpoint, path)
+
+
+def _mask_for_weight(weight, mask):
+    if config.MODE == "weight-wise":
+        return mask.to(weight.dtype)
+
+    if config.MODE == "kernel-wise":
+        return mask.to(weight.dtype)[:, :, None, None]
+
+    if config.MODE == "channel-wise":
+        return mask.to(weight.dtype)[:, None, None, None]
+
+    return mask.to(weight.dtype)
 
 
 def rewind_model_to_checkpoint(model, checkpoint_path):
@@ -208,7 +251,7 @@ def rewind_model_to_checkpoint(model, checkpoint_path):
 
             layer.mask.copy_(mask)
             if hasattr(layer, "weight"):
-                layer.weight.mul_(layer.mask.to(layer.weight.dtype))
+                layer.weight.mul_(_mask_for_weight(layer.weight, layer.mask))
 
     return model
 
@@ -238,11 +281,16 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
     if not config.IS_EPSILON_DECAY:
         current_epsilon = config.EPSILON_END
 
+
     if is_new_run:
         run = _init_wandb_run(config.REG_TYPE, run_name, is_new_run)
 
     total_num_batches = len(train_loader)
-    update_batches = _regularization_update_batches(total_num_batches)
+    update_interval = max(float(config.UPDATE_INTERVAL), 1e-12)
+    epoch_update_period = update_interval if update_interval > 1 else None
+    batch_update_count = max(1, math.ceil(1.0 / update_interval)) if update_interval <= 1 else 0
+    update_batches = _regularization_update_batches(total_num_batches, batch_update_count) if batch_update_count else set()
+    next_epoch_update = epoch_update_period if epoch_update_period is not None else None
 
     for epoch in range(config.MAX_EPOCHS):
         model.train()
@@ -262,15 +310,13 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
                 case "WL1":
                     batch_number = batch_index + 1
 
-                    if batch_number in update_batches:
+                    if update_interval <= 1 and (batch_number in update_batches):
                         if config.IS_EPSILON_DECAY:
                             epsilon_update_count += 1
                             current_epsilon = _advance_epsilon(epsilon_update_count, epsilon_schedule_fn)
                         else:
                             current_epsilon = config.EPSILON_END
 
-                        # Always update WL1 penalties at the scheduled update batches,
-                        # even if epsilon decay is disabled — use the current_epsilon value.
                         L1_penalty_update(model, current_epsilon)
 
                     reg_loss = current_lambda_reg * calculate_WL1_norm(model)
@@ -287,6 +333,17 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
             loss.backward()
             total_train_loss += data_loss.item()
             optimizer.step()
+
+        if (next_epoch_update is not None) and ((epoch + 1) >= next_epoch_update - 1e-12):
+            if config.IS_EPSILON_DECAY:
+                epsilon_update_count += 1
+                current_epsilon = _advance_epsilon(epsilon_update_count, epsilon_schedule_fn)
+            else:
+                current_epsilon = config.EPSILON_END
+
+            L1_penalty_update(model, current_epsilon)
+            next_epoch_update += update_interval
+
 
         if config.IS_LAMBDA_RISE:
             current_lambda_reg = _advance_lambda(lambda_update_count, lambda_schedule_fn)
@@ -534,7 +591,7 @@ def global_pruning(model, masking=False):
                         layer.weight.copy_(pruned_weight)
 
                         if masking:
-                            layer.mask.copy_((kernel_amplitude >= threshold).to(layer.weight.dtype)[:, :, None, None])
+                            layer.mask.copy_((kernel_amplitude >= threshold).to(layer.weight.dtype))
 
                     case "channel-wise":
                         threshold = config.CHANNEL_PRUNING_THRESHOLD
@@ -542,7 +599,7 @@ def global_pruning(model, masking=False):
                         pruned_weight = layer.weight * (channel_amplitude >= threshold).to(layer.weight.dtype)[:, None, None, None]
                         layer.weight.copy_(pruned_weight)
                         if masking:
-                            layer.mask.copy_((channel_amplitude >= threshold).to(layer.weight.dtype)[:, None, None, None])
+                            layer.mask.copy_((channel_amplitude >= threshold).to(layer.weight.dtype))
 
         elif (type(layer) == nn.Linear) and (config.MODE == "weight-wise"):
             weight = layer.weight
@@ -586,7 +643,7 @@ def save_sparacc_curve(spar_cp, acc_cp, path=config.CURVE_PATH):
     df = pandas.read_csv(path, index_col=False)
     row = {"model": config.MODEL, "reg_type": [config.REG_TYPE] * num_records, "mode": [config.MODE] * num_records, "sparsity": spar_cp,
             "accuracy": acc_cp, "lambda": [config.LAMBDA_REG] * num_records, "threshold": [config.WEIGHT_PRUNING_THRESHOLD] * num_records,
-            "update_per_epoch": [config.UPDATE_PER_EPOCH] * num_records, "epsilon": [config.EPSILON] * num_records,
+            "update_interval": [config.UPDATE_INTERVAL] * num_records, "epsilon": [config.EPSILON] * num_records,
              "weight_decay": [config.WEIGHT_DECAY] * num_records
     }
 
