@@ -10,9 +10,9 @@ import pandas as pd
 import torch
 
 from irwl1.data import fetch_cifar10
-from irwl1.eval_utils import configure_evaluation, load_model_from_checkpoint
-from irwl1.utils import calculate_real_sparsity, test
+from irwl1.eval_utils import configure_evaluation, load_model_from_checkpoint, compute_jacobian_norm, compute_layer_condition_numbers
 
+from irwl1.utils import calculate_real_sparsity, test
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MODELS_ROOT = PROJECT_ROOT / "models"
@@ -216,7 +216,10 @@ def main() -> None:
 					model, _ = load_model_from_checkpoint(cp, device)
 					_, acc = test(model, test_loader)
 					spars = calculate_real_sparsity(model)
-					all_checkpoint_rows.append({"configuration": config_name, "checkpoint": str(cp), "sparsity": float(spars), "accuracy": float(acc)})
+					avg_jacobian_norm = compute_jacobian_norm(model, test_loader, device)
+					condition_number_per_layer = compute_layer_condition_numbers(model)
+					all_checkpoint_rows.append({"configuration": config_name, "checkpoint": str(cp), "sparsity": float(spars), "accuracy": float(acc), "avg_jacobian_norm": float(avg_jacobian_norm)})
+					all_checkpoint_rows[-1].update(condition_number_per_layer)
 				except Exception as e:
 					print(f"[ERROR] Failed to evaluate checkpoint {cp}: {e}")
 

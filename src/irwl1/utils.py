@@ -9,10 +9,182 @@ from pathlib import Path
 
 import irwl1.config as config
 from irwl1.regularization import calculate_L1_norm, calculate_WL1_norm, L1_penalty_update
-
+from torch.func import jacrev, vmap
+from irwl1.model import ResNet20
+from irwl1.regularization import L1_penalty_init
+import h5py
 
 def _should_skip_module(name):
     return any(part in {"out", "fc", "downsample"} for part in name.split("."))
+
+def configure_evaluation() -> None:
+	config.WEIGHT_PRUNING_THRESHOLD = 1e-5
+	config.EPSILON = 1e-6
+	config.UPDATE_INTERVAL = 1
+	config.MODE = "weight-wise"
+	config.REG_TYPE = "WL1"
+	config.MODEL = "ResNet20"
+	config.WANDB_MODE = "online"
+	config.WEIGHT_DECAY = 0.0
+
+
+def load_model_from_checkpoint(checkpoint_path: Path, device: torch.device) -> tuple[torch.nn.Module, dict]:
+	model = ResNet20().to(device)
+	L1_penalty_init(model)
+	init_mask(model)
+	checkpoint = torch.load(checkpoint_path, map_location=device)
+	state_dict = checkpoint.get("model_state_dict", checkpoint) if isinstance(checkpoint, dict) else checkpoint
+	model.load_state_dict(state_dict)
+	return model, checkpoint if isinstance(checkpoint, dict) else {}
+
+import torch
+
+def log_cross_section_gradient_variance(model, history_dict):
+    """
+    Calculates the gradient variance for the bottom 10% of weights across targeted layers.
+    Run this immediately AFTER loss.backward() and BEFORE optimizer.step()
+    
+    Args:
+        model: The PyTorch model.
+        history_dict: A dictionary where keys are layer names and values are lists of variances.
+                      e.g., {'conv1': [], 'layer2.0.conv1': [], 'layer3.2.conv2': []}
+    """
+    # Define the specific layers you want to present
+    target_layers = history_dict.keys()
+    new_variances = []
+    
+    with torch.no_grad():
+        for name, module in model.named_modules():
+            if name in target_layers:
+                # Ensure the layer has weights and gradients available
+                if module.weight is not None and module.weight.grad is not None:
+                    w = module.weight.detach()
+                    g = module.weight.grad.detach()
+                    
+                    w_abs = torch.abs(w).view(-1)
+                    g_flat = g.view(-1)
+                    
+                    # Float32 is required for torch.quantile
+                    threshold = torch.quantile(w_abs.to(torch.float32), 0.10)
+                    
+                    bottom_10_mask = w_abs <= threshold
+                    bottom_10_grads = g_flat[bottom_10_mask]
+                    
+                    # Calculate variance and append to the specific layer's history
+                    if len(bottom_10_grads) > 1: # Variance requires at least 2 elements
+                        variance = torch.var(bottom_10_grads).item()
+                        new_variances.append(variance)
+                        history_dict[name].append(variance)
+
+    return new_variances
+
+
+def compute_layer_condition_numbers(model, zero_threshold=1e-5):
+    condition_numbers = {}
+    
+    layer_idx = 0
+    # Ensure no gradients are tracked for this diagnostic
+    with torch.no_grad():
+        for name, module in model.named_modules():
+            if _should_skip_module(name):
+                continue
+            # Target only layers with learnable weight matrices
+            if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear)):
+                
+                w = module.weight.detach()
+                
+                # Unfold 4D Conv weights into 2D matrices
+                if isinstance(module, torch.nn.Conv2d):
+                    w = w.view(w.shape[0], -1) 
+                    
+                # Calculate singular values (returns them sorted descending)
+                singular_values = torch.linalg.svdvals(w)
+                
+                # Isolate the active spectrum to handle sparsity zeros
+                active_svs = singular_values[singular_values > zero_threshold]
+                
+                if len(active_svs) > 0:
+                    sigma_max = active_svs[0].item()
+                    sigma_min = active_svs[-1].item()
+                    condition_numbers[f"layer_{layer_idx}"] = sigma_max / sigma_min
+                else:
+                    # Matrix is entirely pruned or dead
+                    condition_numbers[f"layer_{layer_idx}"] = float('inf') 
+
+                layer_idx += 1
+                    
+    return condition_numbers
+    
+
+def compute_jacobian_norm(model, test_loader, device='cuda'):
+    model.eval()
+    total_norm = 0.0
+    num_samples = 0
+    
+    # We define a wrapper function for the model that takes a single input 
+    # and returns the logits. jacrev expects a function.
+    def fnet_single(x):
+        return model(x.unsqueeze(0)).squeeze(0)
+    
+    # vmap vectorizes the jacobian computation across the batch dimension
+    compute_batch_jacobian = vmap(jacrev(fnet_single))
+
+    # Disable gradient tracking for the weights, we only need it for inputs
+    with torch.no_grad(): 
+        for images, _ in test_loader:
+            images = images.to(device)
+            
+            # compute_batch_jacobian requires inputs to have requires_grad=False 
+            # in the outer context, as functorch handles the internal autodiff.
+            
+            # J shape: (Batch, 10, 3, 32, 32)
+            J = compute_batch_jacobian(images)
+            
+            # Flatten the spatial/channel dimensions: (Batch, 10, 3072)
+            J_flat = J.view(J.shape[0], J.shape[1], -1)
+            
+            # Compute Frobenius norm for each sample in the batch
+            # norm shape: (Batch,)
+            frob_norms = torch.linalg.matrix_norm(J_flat, ord='fro')
+            
+            total_norm += frob_norms.sum().item()
+            num_samples += images.size(0)
+            
+    # Return the average Jacobian Frobenius norm across the dataset
+    return total_norm / num_samples
+
+
+def append_weights_to_hdf5(model, filepath, epsilon, lambd, layer_name='layer2.0.conv1'):
+    """
+    Extracts mid-layer weights and appends them to an HDF5 file.
+    The file is structured hierarchically: epsilon -> lambda -> step_X.
+    """
+    # 1. Extract the raw weights
+    with torch.no_grad():
+        for name, module in model.named_modules():
+            if name == layer_name:
+                weights = module.weight.detach().cpu().numpy().flatten()
+                break
+        else:
+            raise ValueError(f"Layer '{layer_name}' not found in the model.")
+
+    # 2. Open HDF5 file in 'append' mode ('a' creates it if it doesn't exist)
+    with h5py.File(filepath, 'a') as f:
+        # Create a clean string path for the group (e.g., "eps_1e-06/lam_0.01")
+        # We format epsilon in scientific notation to avoid messy strings
+        group_path = f"eps_{epsilon:.1e}/lam_{lambd:.4f}"
+        
+        # 3. Get or create the hierarchical group
+        if group_path in f:
+            grp = f[group_path]
+        else:
+            grp = f.create_group(group_path)
+            
+        # 4. Determine the next step index by counting existing datasets
+        step_idx = len(grp.keys())
+        
+        # 5. Save the numpy array directly into the file
+        grp.create_dataset(f"step_{step_idx}", data=weights)
 
 
 def calculate_thresholded_sparsity(model):
@@ -194,7 +366,7 @@ def _init_wandb_run(reg_type, run_name, is_new_run):
         return None
 
     if reg_type == "L1":
-        return wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_lambda{round(config.LAMBDA_REG, 3)}", mode=config.WANDB_MODE)
+        return wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_lambda{round(config.LAMBDA_REG_END, 3)}", mode=config.WANDB_MODE)
     if reg_type == "WL1":
         return wandb.init(project=f"pruning_{config.MODEL}_{config.REG_TYPE}", name=f"{config.MODE[:-5]}_threshold{config.WEIGHT_PRUNING_THRESHOLD}_updateint{config.UPDATE_INTERVAL}_eps{config.EPSILON}", mode=config.WANDB_MODE)
     if reg_type == "None":
@@ -270,6 +442,7 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
     previous_thresholded_sparsity = None
     sparsity_stall_count = 0
 
+    variance_history = {name: [] for name, module in model.named_modules() if name in {"layer2.0.conv1", "layer3.2.conv2", "conv1"}}
 
     epsilon_update_count = 0
     lambda_update_count = 0
@@ -321,6 +494,8 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
 
                     reg_loss = current_lambda_reg * calculate_WL1_norm(model)
                     loss = data_loss + reg_loss
+
+
                 case "L1":
                     reg_loss = current_lambda_reg * calculate_L1_norm(model)
                     loss = data_loss + reg_loss
@@ -331,8 +506,13 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+
+            new_variances = log_cross_section_gradient_variance(model, variance_history)  # Call the logging function here
             total_train_loss += data_loss.item()
             optimizer.step()
+
+        #if (epoch % 5 == 0):
+        #    append_weights_to_hdf5(model, "results/waterfall_weight.h5", current_epsilon, current_lambda_reg)
 
         if (next_epoch_update is not None) and ((epoch + 1) >= next_epoch_update - 1e-12):
             if config.IS_EPSILON_DECAY:
@@ -345,15 +525,12 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
             next_epoch_update += update_interval
 
 
-        if config.IS_LAMBDA_RISE:
-            current_lambda_reg = _advance_lambda(lambda_update_count, lambda_schedule_fn)
-        else:
-            current_lambda_reg = config.LAMBDA_REG_END
         avg_train_loss = total_train_loss / total_num_batches
         current_val_loss, val_acc = validate(model, val_loader)
         current_thresholded_sparsity = calculate_thresholded_sparsity(model)
         current_real_sparsity = calculate_real_sparsity(model)
         sparsity_delta = None if previous_thresholded_sparsity is None else abs(current_thresholded_sparsity - previous_thresholded_sparsity)
+
 
         if run is not None:
             run.log({
@@ -364,7 +541,14 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
                 "train/real_sparsity": current_real_sparsity,
                 "reg/epsilon": current_epsilon,
                 "reg/lambda_reg": current_lambda_reg,
+                "train/early_layer_variance": new_variances[0],
+                "train/middle_layer_variance": new_variances[1],
+                "train/end_layer_variance": new_variances[2],
             })
+        if config.IS_LAMBDA_RISE:
+            current_lambda_reg = _advance_lambda(lambda_update_count, lambda_schedule_fn)
+        else:
+            current_lambda_reg = config.LAMBDA_REG_END
 
         sparsity_stall_count, should_stop, _ = _regularized_sparsity_stop(
             previous_thresholded_sparsity,
@@ -400,6 +584,7 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
     best_val_loss = float("inf")
     patience = config.LOSS_PATIENCE
     stalled_epochs = 0
+    variance_history = {name: [] for name, module in model.named_modules() if name in {"layer2.0.conv1", "layer3.2.conv2", "conv1"}}
 
     if is_new_run:
         run = _init_wandb_run(config.REG_TYPE, run_name, is_new_run)
@@ -421,6 +606,7 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+            new_variances = log_cross_section_gradient_variance(model, variance_history)
             total_train_loss += loss.item()
             optimizer.step()
 
@@ -443,6 +629,9 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
                 "train/real_sparsity": current_real_sparsity,
                 "reg/epsilon": 0,
                 "reg/lambda_reg": 0,
+                "train/early_layer_variance": new_variances[0],
+                "train/middle_layer_variance": new_variances[1],
+                "train/end_layer_variance": new_variances[2],
             })
         if current_val_loss < best_val_loss:
             best_val_loss = current_val_loss
@@ -465,6 +654,193 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
 
     if rewind and not rewind_checkpoint_saved:
         print(f"Warning: rewind checkpoint was not saved because training ended before epoch {rewind_epoch}")
+
+    return model, run, num_epochs
+
+
+def _regularization_parameters(model):
+    regularization_parameters = []
+
+    for name, layer in model.named_modules():
+        if _should_skip_module(name):
+            continue
+
+        if type(layer) in [nn.Conv2d, nn.Linear]:
+            weight = getattr(layer, "weight", None)
+            if weight is not None and weight.requires_grad:
+                regularization_parameters.append(weight)
+
+    return regularization_parameters
+
+
+def _effective_v2_lambda(current_lambda_reg, lambda_floor):
+    lambda_floor = 1e-3 if lambda_floor is None else lambda_floor
+    return max(current_lambda_reg, lambda_floor)
+
+
+def _apply_regularization_update(model, optimizer, regularization_loss):
+    regularization_parameters = _regularization_parameters(model)
+    if not regularization_parameters:
+        return
+
+    param_lrs = {
+        id(param): group.get("lr", config.LEARNING_RATE)
+        for group in optimizer.param_groups
+        for param in group["params"]
+    }
+    regularization_grads = torch.autograd.grad(
+        regularization_loss,
+        regularization_parameters,
+        retain_graph=False,
+        create_graph=False,
+        allow_unused=True,
+    )
+
+    with torch.no_grad():
+        for param, grad in zip(regularization_parameters, regularization_grads):
+            if grad is None:
+                continue
+
+            param.add_(grad, alpha=-param_lrs.get(id(param), config.LEARNING_RATE))
+
+
+def train_regularized_v2(
+    model,
+    train_loader,
+    val_loader,
+    optimizer=None,
+    is_new_run=True,
+    run=None,
+    run_name="default",
+    weight_decay=False,
+    sparsity_delta_threshold=None,
+    sparsity_patience=None,
+    epsilon_schedule_fn=None,
+    lambda_schedule_fn=None,
+    lambda_floor=1e-3,
+):
+
+    criterion = torch.nn.CrossEntropyLoss()
+    if optimizer is None:
+        optimizer_kwargs = {"lr": config.LEARNING_RATE}
+        optimizer = torch.optim.Adam(model.parameters(), **optimizer_kwargs)
+    else:
+        for group in optimizer.param_groups:
+            group["weight_decay"] = 0.0
+
+    previous_thresholded_sparsity = None
+    sparsity_stall_count = 0
+
+    epsilon_update_count = 0
+    lambda_update_count = 0
+    current_lambda_reg = config.LAMBDA_REG_END if not config.IS_LAMBDA_RISE else config.LAMBDA_REG_START
+    current_epsilon = config.EPSILON_END if not config.IS_EPSILON_DECAY else config.EPSILON_START
+    sparsity_delta_threshold = config.THRESHOLDED_SPARSITY_MIN_DELTA if sparsity_delta_threshold is None else sparsity_delta_threshold
+    sparsity_patience = config.SPAR_PATIENCE if sparsity_patience is None else sparsity_patience
+    config.EPSILON = config.EPSILON_END if not config.IS_EPSILON_DECAY else config.EPSILON_START
+    if not config.IS_EPSILON_DECAY:
+        current_epsilon = config.EPSILON_END
+
+    if is_new_run:
+        run = _init_wandb_run(config.REG_TYPE, run_name, is_new_run)
+
+    total_num_batches = len(train_loader)
+    update_interval = max(float(config.UPDATE_INTERVAL), 1e-12)
+    epoch_update_period = update_interval if update_interval > 1 else None
+    batch_update_count = max(1, math.ceil(1.0 / update_interval)) if update_interval <= 1 else 0
+    update_batches = _regularization_update_batches(total_num_batches, batch_update_count) if batch_update_count else set()
+    next_epoch_update = epoch_update_period if epoch_update_period is not None else None
+
+    for epoch in range(config.MAX_EPOCHS):
+        model.train()
+        if config.IS_LAMBDA_RISE:
+            lambda_update_count += 1
+
+        total_train_loss = 0
+
+        for batch_index, (inputs, targets) in enumerate(train_loader):
+            inputs = inputs.to(config.DEVICE)
+            targets = targets.to(config.DEVICE)
+
+            outputs = model(inputs)
+            data_loss = criterion(input=outputs, target=targets)
+
+            optimizer.zero_grad(set_to_none=True)
+            data_loss.backward()
+            total_train_loss += data_loss.item()
+            optimizer.step()
+
+            if config.REG_TYPE == "WL1":
+                batch_number = batch_index + 1
+                if update_interval <= 1 and (batch_number in update_batches):
+                    if config.IS_EPSILON_DECAY:
+                        epsilon_update_count += 1
+                        current_epsilon = _advance_epsilon(epsilon_update_count, epsilon_schedule_fn)
+                    else:
+                        current_epsilon = config.EPSILON_END
+
+                    L1_penalty_update(model, current_epsilon)
+
+                effective_lambda_reg = _effective_v2_lambda(current_lambda_reg, lambda_floor)
+                regularization_loss = effective_lambda_reg * calculate_WL1_norm(model)
+
+                optimizer.zero_grad(set_to_none=True)
+                _apply_regularization_update(model, optimizer, regularization_loss)
+
+            elif config.REG_TYPE == "L1":
+                effective_lambda_reg = _effective_v2_lambda(current_lambda_reg, lambda_floor)
+                regularization_loss = effective_lambda_reg * calculate_L1_norm(model)
+
+                optimizer.zero_grad(set_to_none=True)
+                _apply_regularization_update(model, optimizer, regularization_loss)
+
+        if (next_epoch_update is not None) and ((epoch + 1) >= next_epoch_update - 1e-12):
+            if config.IS_EPSILON_DECAY:
+                epsilon_update_count += 1
+                current_epsilon = _advance_epsilon(epsilon_update_count, epsilon_schedule_fn)
+            else:
+                current_epsilon = config.EPSILON_END
+
+            L1_penalty_update(model, current_epsilon)
+            next_epoch_update += update_interval
+
+        if config.IS_LAMBDA_RISE:
+            current_lambda_reg = _advance_lambda(lambda_update_count, lambda_schedule_fn)
+        else:
+            current_lambda_reg = config.LAMBDA_REG_END
+
+        avg_train_loss = total_train_loss / max(1, total_num_batches)
+        current_val_loss, val_acc = validate(model, val_loader)
+        current_thresholded_sparsity = calculate_thresholded_sparsity(model)
+        current_real_sparsity = calculate_real_sparsity(model)
+
+        if run is not None:
+            run.log({
+                "train/loss": avg_train_loss,
+                "val/loss": current_val_loss,
+                "val/acc": val_acc,
+                "train/thresholded_sparsity": current_thresholded_sparsity,
+                "train/real_sparsity": current_real_sparsity,
+                "reg/epsilon": current_epsilon,
+                "reg/lambda_reg": _effective_v2_lambda(current_lambda_reg, lambda_floor),
+            })
+
+        sparsity_stall_count, should_stop, _ = _regularized_sparsity_stop(
+            previous_thresholded_sparsity,
+            current_thresholded_sparsity,
+            sparsity_stall_count,
+            sparsity_delta_threshold,
+            sparsity_patience,
+            current_epsilon,
+        )
+
+        previous_thresholded_sparsity = current_thresholded_sparsity
+
+        if should_stop:
+            break
+
+    num_epochs = epoch + 1
+    print(f"Ended regularization after {num_epochs} epochs")
 
     return model, run, num_epochs
 

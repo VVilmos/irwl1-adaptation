@@ -16,6 +16,7 @@ dependencies = [
     "pandas[cu130]>=3.0.1",
     "scikit-learn>=1.8.0",
     "optuna>=4.8.0",
+    "h5py[cu130]>=3.16.0",
 ]
 
 

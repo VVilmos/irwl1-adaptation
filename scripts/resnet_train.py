@@ -18,10 +18,12 @@ MAX_SPARSITY = 90.0
 
 def _configure_training() -> None:
 	config.WEIGHT_PRUNING_THRESHOLD = 1e-5
-	config.KERNEL_PRUNING_THRESHOLD = 2e-5
-	config.MODE = "kernel-wise"
+	config.KERNEL_PRUNING_THRESHOLD = 3e-5
+	config.MODE = "weight-wise"
 	config.EPSILON = config.EPSILON_START
-	config.UPDATE_INTERVAL = 2
+	config.UPDATE_INTERVAL = 1
+	config.LAMBDA_REG_END = 0.01
+	config.EPSILON_END = 1e-6
 	config.REG_TYPE = "WL1"
 	config.MODEL = "ResNet20"
 	config.WANDB_MODE = "online"
@@ -39,7 +41,10 @@ def _parse_args() -> argparse.Namespace:
 	parser.add_argument("--smooth", dest="smooth", action="store_true", help="Enable smooth schedules for epsilon and lambda")
 	parser.add_argument("--static", dest="smooth", action="store_false", help="Disable smooth schedules (static epsilon/lambda)")
 	parser.add_argument("--offline", dest="offline", action="store_true", help="Disable smooth schedules (static epsilon/lambda)")
-	parser.set_defaults(rewind=config.REWIND, smooth=True, offline=False)
+	parser.add_argument("--save-checkpoint", dest="persistent", action="store_true", help="Disable smooth schedules (static epsilon/lambda)")
+	parser.add_argument("--epsilon", dest="epsilon", type=float, help="set constant epsilon value")
+	parser.add_argument("--lambda", dest="lambda_reg", type=float, help="set constant lambda value")
+	parser.set_defaults(rewind=config.REWIND, smooth=True, offline=False, persistent=False, epsilon=None, lambda_reg=None)
 	return parser.parse_args()
 
 
@@ -109,9 +114,11 @@ def _train_single_run(run_id: int, train_loader, val_loader, device: torch.devic
 
 		current_real_sparsity = calculate_real_sparsity(model)
 
-		state_dict = model.state_dict()
-		checkpoint_path = run_dir / f"checkpoint_spar{current_real_sparsity:.2f}.pth"
-		torch.save(state_dict, checkpoint_path)
+		if (config.PERSISTENT):
+			state_dict = model.state_dict()
+			checkpoint_path = run_dir / f"checkpoint_spar{current_real_sparsity:.2f}.pth"
+			torch.save(state_dict, checkpoint_path)
+
 		if current_real_sparsity >= MAX_SPARSITY:
 			print(f"[RUN {run_id}] Reached target sparsity: {current_real_sparsity:.2f}%")
 			# record iteration info (no regularization phase ran)
@@ -146,6 +153,7 @@ def _train_single_run(run_id: int, train_loader, val_loader, device: torch.devic
 		else:
 			zero_pruned_optimizer_state(model, optimizer)
 
+
 	if wandb_run is not None:
 		try:
 			import wandb
@@ -154,14 +162,14 @@ def _train_single_run(run_id: int, train_loader, val_loader, device: torch.devic
 		except Exception:
 			pass
 
-	# write total epochs executed during this run to CSV in the run folder
-	try:
-		csv_path = run_dir / "total_epochs.csv"
-		with open(csv_path, "w") as fh:
-			fh.write("total_epochs\n")
-			fh.write(str(total_epochs) + "\n")
-	except Exception as e:
-		print(f"Warning: could not write total_epochs.csv: {e}")
+	if config.PERSISTENT:
+		try:
+			csv_path = run_dir / "total_epochs.csv"
+			with open(csv_path, "w") as fh:
+				fh.write("total_epochs\n")
+				fh.write(str(total_epochs) + "\n")
+		except Exception as e:
+			print(f"Warning: could not write total_epochs.csv: {e}")
 
 	# write epoch-by-iteration records
 	try:
@@ -191,6 +199,9 @@ def main() -> None:
 	config.IS_EPSILON_DECAY = args.smooth
 	config.IS_LAMBDA_RISE = args.smooth
 	config.WANDB_MODE = "offline" if args.offline else "online"
+	config.PERSISTENT = args.persistent
+	config.EPSILON_END = args.epsilon if args.epsilon is not None else config.EPSILON_END
+	config.LAMBDA_REG_END = args.lambda_reg if args.lambda_reg is not None else config.LAMBDA_REG_END
 	Path("models").mkdir(parents=True, exist_ok=True)
 	Path("results").mkdir(parents=True, exist_ok=True)
 
