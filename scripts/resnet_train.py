@@ -21,7 +21,7 @@ def _configure_training() -> None:
 	config.KERNEL_PRUNING_THRESHOLD = 3e-5
 	config.MODE = "weight-wise"
 	config.EPSILON = config.EPSILON_START
-	config.UPDATE_INTERVAL = 1
+	config.UPDATE_INTERVAL = 3
 	config.LAMBDA_REG_END = 0.01
 	config.EPSILON_END = 1e-6
 	config.REG_TYPE = "WL1"
@@ -44,7 +44,10 @@ def _parse_args() -> argparse.Namespace:
 	parser.add_argument("--save-checkpoint", dest="persistent", action="store_true", help="Disable smooth schedules (static epsilon/lambda)")
 	parser.add_argument("--epsilon", dest="epsilon", type=float, help="set constant epsilon value")
 	parser.add_argument("--lambda", dest="lambda_reg", type=float, help="set constant lambda value")
-	parser.set_defaults(rewind=config.REWIND, smooth=True, offline=False, persistent=False, epsilon=None, lambda_reg=None)
+	parser.add_argument("--interval", dest="update_interval", type=float, help="set constant lambda value")
+	parser.add_argument("--wl1", dest="wl1", action="store_true", help="set constant lambda value")
+	parser.add_argument("--l1", dest="l1", action="store_true", help="set constant lambda value")
+	parser.set_defaults(rewind=config.REWIND, smooth=True, offline=False, persistent=False, epsilon=None, lambda_reg=None, update_interval=1, wl1=True, l1=False)
 	return parser.parse_args()
 
 
@@ -72,13 +75,13 @@ def _build_optimizer(model: torch.nn.Module) -> torch.optim.Optimizer:
 	)
 
 
-def _checkpoint_folder(run_id: int, rewind: bool, smooth: bool) -> Path:
-	mode_folder = f"{'smooth' if smooth else 'static'}_{'rewind' if rewind else 'no_rewind'}"
+def _checkpoint_folder(run_id: int, rewind: bool, smooth: bool, regtype) -> Path:
+	mode_folder = f"{regtype}_{'smooth' if smooth else 'static'}_{'rewind' if rewind else 'no_rewind'}"
 	return Path("models") / mode_folder / str(run_id)
 
 
 def _train_single_run(run_id: int, train_loader, val_loader, device: torch.device, rewind: bool, smooth: bool) -> None:
-	run_dir = _checkpoint_folder(run_id, rewind, smooth)
+	run_dir = _checkpoint_folder(run_id, rewind, smooth, config.REG_TYPE)
 	run_dir.mkdir(parents=True, exist_ok=True)
 	print(f"[RUN {run_id}] Starting in {run_dir}")
 	rewind_checkpoint_path = run_dir / "rewind_checkpoint.pth"
@@ -171,19 +174,19 @@ def _train_single_run(run_id: int, train_loader, val_loader, device: torch.devic
 		except Exception as e:
 			print(f"Warning: could not write total_epochs.csv: {e}")
 
-	# write epoch-by-iteration records
-	try:
-		df = pd.DataFrame(epoch_records)
-		iter_csv = run_dir / "epochs_by_iteration.csv"
-		df.to_csv(iter_csv, index=False)
-		if wandb_run is not None:
-			try:
-				import wandb
-				wandb_run.log({"epoch_records": wandb.Table(dataframe=df)})
-			except Exception:
-				pass
-	except Exception as e:
-		print(f"Warning: could not write epochs_by_iteration.csv: {e}")
+		# write epoch-by-iteration records
+		try:
+			df = pd.DataFrame(epoch_records)
+			iter_csv = run_dir / "epochs_by_iteration.csv"
+			df.to_csv(iter_csv, index=False)
+			if wandb_run is not None:
+				try:
+					import wandb
+					wandb_run.log({"epoch_records": wandb.Table(dataframe=df)})
+				except Exception:
+					pass
+		except Exception as e:
+			print(f"Warning: could not write epochs_by_iteration.csv: {e}")
 
 
 def main() -> None:
@@ -202,6 +205,8 @@ def main() -> None:
 	config.PERSISTENT = args.persistent
 	config.EPSILON_END = args.epsilon if args.epsilon is not None else config.EPSILON_END
 	config.LAMBDA_REG_END = args.lambda_reg if args.lambda_reg is not None else config.LAMBDA_REG_END
+	config.UPDATE_INTERVAL = args.update_interval if args.update_interval is not None else config.UPDATE_INTERVAL
+	config.REG_TYPE = "L1" if args.l1 else ("WL1" if args.wl1 else config.REG_TYPE)
 	Path("models").mkdir(parents=True, exist_ok=True)
 	Path("results").mkdir(parents=True, exist_ok=True)
 

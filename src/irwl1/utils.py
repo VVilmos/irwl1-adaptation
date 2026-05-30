@@ -3,6 +3,7 @@ import torch.nn as nn
 import wandb
 from copy import deepcopy
 import math
+import numpy
 
 import pandas
 from pathlib import Path
@@ -38,25 +39,18 @@ def load_model_from_checkpoint(checkpoint_path: Path, device: torch.device) -> t
 	return model, checkpoint if isinstance(checkpoint, dict) else {}
 
 import torch
+import torch
 
 def log_cross_section_gradient_variance(model, history_dict):
     """
-    Calculates the gradient variance for the bottom 10% of weights across targeted layers.
+    Calculates the gradient variance for the bottom 10% of NONZERO weights.
     Run this immediately AFTER loss.backward() and BEFORE optimizer.step()
-    
-    Args:
-        model: The PyTorch model.
-        history_dict: A dictionary where keys are layer names and values are lists of variances.
-                      e.g., {'conv1': [], 'layer2.0.conv1': [], 'layer3.2.conv2': []}
     """
-    # Define the specific layers you want to present
     target_layers = history_dict.keys()
-    new_variances = []
     
     with torch.no_grad():
         for name, module in model.named_modules():
             if name in target_layers:
-                # Ensure the layer has weights and gradients available
                 if module.weight is not None and module.weight.grad is not None:
                     w = module.weight.detach()
                     g = module.weight.grad.detach()
@@ -64,19 +58,22 @@ def log_cross_section_gradient_variance(model, history_dict):
                     w_abs = torch.abs(w).view(-1)
                     g_flat = g.view(-1)
                     
-                    # Float32 is required for torch.quantile
-                    threshold = torch.quantile(w_abs.to(torch.float32), 0.10)
+                    # 1. Isolate the nonzero weights 
+                    # (Using > 1e-12 instead of > 0 to safely handle floating-point underflow)
+                    nonzero_w_abs = w_abs[w_abs > 1e-12]
                     
-                    bottom_10_mask = w_abs <= threshold
-                    bottom_10_grads = g_flat[bottom_10_mask]
-                    
-                    # Calculate variance and append to the specific layer's history
-                    if len(bottom_10_grads) > 1: # Variance requires at least 2 elements
-                        variance = torch.var(bottom_10_grads).item()
-                        new_variances.append(variance)
-                        history_dict[name].append(variance)
-
-    return new_variances
+                    # 2. Ensure there are enough active weights to calculate a meaningful quantile
+                    if len(nonzero_w_abs) > 1:
+                        threshold = torch.quantile(nonzero_w_abs.to(torch.float32), 0.10)
+                        
+                        # 3. Create a compound mask: strictly active AND below the threshold
+                        bottom_10_mask = (w_abs > 1e-12) & (w_abs <= threshold)
+                        bottom_10_grads = g_flat[bottom_10_mask]
+                        
+                        # 4. Calculate variance
+                        if len(bottom_10_grads) > 1:
+                            variance = torch.var(bottom_10_grads).item()
+                            history_dict[name].append(variance)
 
 
 def compute_layer_condition_numbers(model, zero_threshold=1e-5):
@@ -442,7 +439,11 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
     previous_thresholded_sparsity = None
     sparsity_stall_count = 0
 
-    variance_history = {name: [] for name, module in model.named_modules() if name in {"layer2.0.conv1", "layer3.2.conv2", "conv1"}}
+    epoch_variance_history = {
+    'conv1': [], 
+    'layer2.0.conv1': [], 
+    'layer3.2.conv2': []
+}
 
     epsilon_update_count = 0
     lambda_update_count = 0
@@ -472,6 +473,7 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
             lambda_update_count += 1
         total_train_loss = 0
 
+        batch_variances = {layer: [] for layer in epoch_variance_history.keys()}
         for batch_index, (inputs, targets) in enumerate(train_loader):
             inputs = inputs.to(config.DEVICE)
             targets = targets.to(config.DEVICE)
@@ -507,7 +509,7 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
 
-            new_variances = log_cross_section_gradient_variance(model, variance_history)  # Call the logging function here
+            log_cross_section_gradient_variance(model, batch_variances)  # Call the logging function here
             total_train_loss += data_loss.item()
             optimizer.step()
 
@@ -531,6 +533,10 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
         current_real_sparsity = calculate_real_sparsity(model)
         sparsity_delta = None if previous_thresholded_sparsity is None else abs(current_thresholded_sparsity - previous_thresholded_sparsity)
 
+        for layer_name in epoch_variance_history.keys():
+            if len(batch_variances[layer_name]) > 0:
+                avg_epoch_var = numpy.mean(batch_variances[layer_name])
+                epoch_variance_history[layer_name].append(avg_epoch_var)
 
         if run is not None:
             run.log({
@@ -541,9 +547,9 @@ def train_regularized(model, train_loader, val_loader, optimizer=None, is_new_ru
                 "train/real_sparsity": current_real_sparsity,
                 "reg/epsilon": current_epsilon,
                 "reg/lambda_reg": current_lambda_reg,
-                "train/early_layer_variance": new_variances[0],
-                "train/middle_layer_variance": new_variances[1],
-                "train/end_layer_variance": new_variances[2],
+                "train/early_layer_variance": epoch_variance_history['conv1'][-1] if len(epoch_variance_history['conv1']) > 0 else None,
+                "train/middle_layer_variance": epoch_variance_history['layer2.0.conv1'][-1] if len(epoch_variance_history['layer2.0.conv1']) > 0 else None,
+                "train/end_layer_variance": epoch_variance_history['layer3.2.conv2'][-1] if len(epoch_variance_history['layer3.2.conv2']) > 0 else None,
             })
         if config.IS_LAMBDA_RISE:
             current_lambda_reg = _advance_lambda(lambda_update_count, lambda_schedule_fn)
@@ -584,8 +590,11 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
     best_val_loss = float("inf")
     patience = config.LOSS_PATIENCE
     stalled_epochs = 0
-    variance_history = {name: [] for name, module in model.named_modules() if name in {"layer2.0.conv1", "layer3.2.conv2", "conv1"}}
-
+    epoch_variance_history = {
+        'conv1': [],
+        'layer2.0.conv1': [],
+        'layer3.2.conv2': []   
+    }
     if is_new_run:
         run = _init_wandb_run(config.REG_TYPE, run_name, is_new_run)
 
@@ -597,6 +606,7 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
         model.train()
         total_train_loss = 0
 
+        batch_variances = {layer: [] for layer in epoch_variance_history.keys()}
         for inputs, targets in train_loader:
             inputs = inputs.to(config.DEVICE)
             targets = targets.to(config.DEVICE)
@@ -606,7 +616,7 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            new_variances = log_cross_section_gradient_variance(model, variance_history)
+            log_cross_section_gradient_variance(model, batch_variances)
             total_train_loss += loss.item()
             optimizer.step()
 
@@ -620,6 +630,12 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
             rewind_checkpoint_saved = True
             print(f"Saved rewind checkpoint at epoch {epoch + 1} to {rewind_checkpoint_path}")
 
+
+        for layer_name in epoch_variance_history.keys():
+            if len(batch_variances[layer_name]) > 0:
+                avg_epoch_var = numpy.mean(batch_variances[layer_name])
+                epoch_variance_history[layer_name].append(avg_epoch_var)
+
         if run is not None:
             run.log({
                 "train/loss": avg_train_loss,
@@ -629,10 +645,11 @@ def train( model, train_loader, val_loader, optimizer=None, is_new_run=True, run
                 "train/real_sparsity": current_real_sparsity,
                 "reg/epsilon": 0,
                 "reg/lambda_reg": 0,
-                "train/early_layer_variance": new_variances[0],
-                "train/middle_layer_variance": new_variances[1],
-                "train/end_layer_variance": new_variances[2],
+                "train/early_layer_variance": epoch_variance_history['conv1'][-1] if len(epoch_variance_history['conv1']) > 0 else None,
+                "train/middle_layer_variance": epoch_variance_history['layer2.0.conv1'][-1] if len(epoch_variance_history['layer2.0.conv1']) > 0 else None,
+                "train/end_layer_variance": epoch_variance_history['layer3.2.conv2'][-1] if len(epoch_variance_history['layer3.2.conv2']) > 0 else None,
             })
+
         if current_val_loss < best_val_loss:
             best_val_loss = current_val_loss
             best_params = deepcopy(model.state_dict())
