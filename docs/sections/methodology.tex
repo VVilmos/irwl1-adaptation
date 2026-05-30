@@ -1,6 +1,6 @@
 \section{Methodology}\label{sec:method}
 
-In this section I present the benchmark dataset and adversarial algorithm utilized to evaluate OOD and adversarial robustness of a (pruned) network.
+In this section We present the benchmark dataset and adversarial algorithm utilized to evaluate OOD and adversarial robustness of a (pruned) network.
 
 \subsection{CIFAR Corrupted Benchmark}\label{subsec:cifar10c}
 
@@ -8,9 +8,9 @@ The CIFAR-10 and CIFAR-100 datasets have been used as benchmarks for decades in 
 60,000 32x32 RGB images with 10 and 100 different classes, respectively. The images are uniformly distributed across the classes and objects are at the center, thus
 it serves as a clean baseline without any modification that may happen in real-world scenarios.
 
-To facilitate the prediction of the impact of common image corruptions the trained model, the CIFAR-10-C and CIFAR-100-C datasets were
- constructed \cite{cifar10c}. The authors applied 19 different types of corruptions at varying intensities on the test sets of CIFAR-10 and CIFAR-100, respectively. 
- More specifically, corruptions are categories into followig categories: noise, blur, weather conditions, and digital corruptions, while intensity levels span from 1 to 5.
+To facilitate the prediction of the impact of common image corruptions on the trained model, the CIFAR-10-C and CIFAR-100-C datasets were
+ constructed \cite{cifar10c}. Authors applied 19 different types of corruptions at varying intensities on the test sets of CIFAR-10 and CIFAR-100, respectively. 
+ More specifically, corruptions are divided into following categories: noise, blur, weather conditions, and digital corruptions, while intensity levels span from 1 to 5.
  Figure \ref{fig:cifar10c} shows an example for every category, applied on the same image from CIFAR-10 dataset.
 
 
@@ -30,27 +30,27 @@ the underlying concept - the class of photographed object in this case - remains
 Apart from OOD robustness, a neural network may need be prepared for adversarial attacks, which were introduced in section \ref{subsec:ood&adv}. These adversarial attacks
 can be categorized in many ways. Methods which have full control over the network are called white-box attacks, while black-box attacks can only give an input and inspect
  the corresponding output of the model. In case of the former category, some algorithms are looking for the minimal perturbation on the input image which achieves
-  misclassification, while others return an altered image whose distance from the original is just thresholded.  
+  misclassification, while others return an altered image whose distance from the original is constrained below a certain threshold.  
 
 Finding minimal perturbations for deep neural networks yields NP-hard optimization problems whose computational costs are prohibitive. Thus, finding scalable heuristics
 which find high-quality results fast became the focus of current literature. Regarding adversarial robustness of trained models, an attack that overestimates the minimal 
-perturbation also overestimates the robustness of the model, thus encouraging false conclusions. 
+perturbation also overestimates the robustness of the model, hence encouraging false conclusions. 
 
 The Fast Adaptive Boundary (FAB) attack was specifically tailored to yield high-quality results fast with minimal hyperparameter-tuning required \cite{fab}. It uses a straight
-hyperplane to approximate the complex decision boundary between the true class and any other wrong class, utilizing raw output logits and their gradients to with respect to
+hyperplane to approximate the complex decision boundary between the true class and any other wrong class, utilizing raw output logits and their gradients with respect to
 input pixels. After projecting the original image to the closest decision boundary, the targeted point is calculated via a convex combination of the projected and the original point
 to keep the final point close to the original, hence approximating the minimal perturbation better. Unlike the Projected Gradient Descent attack and many others which maximize the loss
 function by altering the input image, FAB algorithm uses the gradient of the difference between logit values corresponding to different classes. Thus, it is robust to so-called 
 gradient masking where the loss gradient signal is obfuscated via random noise or non-differentiable operations which make the loss landscape jagged and un-smooth. 
 In case of heavily pruned networks, the loss landscape has many flat zones, which makes the gradient vector sparse. A sparse gradient vector then hinders finding the decision boundary.
-In conclusion, FAB is ideal to measure the adversarial robustness of a sparse network based on the magnitude/norm of the minimal perturbation it finds. As the norm of the this
-perturbation is a good proxy for the distance between decision boundaries, we can infer how stable or robust the model's mapping is.
+In conclusion, FAB is ideal to measure the adversarial robustness of a sparse network based on the magnitude of the minimal perturbation it finds. As the norm of the this
+perturbation is a good proxy for the distance between decision boundaries, we can infer how stable or robust the model's mapping is accordingly.
 
 
 \subsection{Fourier Sensitivity Method}\label{sec:fourier}
 
 The primary method to train a robust model is data augmentation, which includes generating out-of-distribution samples and inserting them
-into the training set. This requires a good understanding of what distortions or corruptions the model needs to be robust against in a real-world setting.
+into the training set. This requires a good understanding of what distortions or corruptions the model needs to be robust to in a real-world setting.
 In case of image classification, transformations like rotation, cropping or flipping are commonly used to inject the inductive bias of invariance to these
 transformations into the model. As seen in section \ref{subsec:cifar10c}, benchmarking the performance of models on different corruption types can provide
 a sense of robustness. However, these common corruptions may not cover all possible features of distortions in the input space. 

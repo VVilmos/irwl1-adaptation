@@ -2,37 +2,37 @@
 
 Large neural networks have produced state-of-the-art results in numerous fields such as computer vision
  or natural language processing. To deploy these neural network model in an industry application, the most common option is training 
- the model in a data center utilizing huge GPU clusters, liquid cooling, etc. At inference time, the clients could also access the model in the data center 
- via internet.
+ the model in a data center utilizing huge GPU clusters, liquid cooling, etc. At inference time, the clients usually access the model in the data center 
+ also via the internet.
 
- However, with the proliferation of Internet-of-Things (IoT) devices and applications, neural network models are required to run more efficiently on
+ However, with the proliferation of Internet-of-Things devices and applications, neural network models are required to run more efficiently on
  resource-constrained devices to facilitate the growing number of edge AI use cases \cite{edgeai}. Efficiency or compactness refers to the model giving outputs accurate
  enough to enable the specific application, while also inducing low memory and energy-consumption overhead. The latter two translates to the model having
- a small parameter count and an architecture which minimizes latency and floating-point operations (FLOPs). Depending on the deployment scenario, a model may
+ a small parameter count and an architecture which minimizes latency and floating-point operations. Depending on the deployment scenario, a model may
  receive inputs that are far from the distribution of the training data or inputs that are manipulated to make the model produce a wrong output. Robustness of 
  the model refers to its ability to maintain its performance even on such inputs.  To sum up, a trained neural network has to satisfy accuracy, compactness and robustness requirements in order to become qualified for industrial
   applications. 
 
-  In academia, there has been extensive research to improve them, but most works tackled them separately \cite{effnet} \cite{pruning_survey24}.
+  In academia, there has been extensive research to improve these requirements, but most works tackled them separately \cite{effnet}, \cite{pruning_survey24}.
   To improve accuracy, the general approach was training overparameterized networks with regularization. Model compression techniques (i.e. weight pruning, knowledge
-  distillation) and novel architecture have been proposed to achieve compactness while retaining accuracy. Finally, increasing robustness has been achieved by 
+  distillation) and novel architectures have been proposed to achieve compactness while retaining accuracy. Finally, increasing robustness has been achieved by 
   augmenting the training dataset to better represent the distribution of inputs at inference \cite{effectofadvtraining}.
 
   However, meeting these requirements simultaneously - so not increasing one at the expense of another - was found to be a challenge \cite{cards}.
-  Therefore, it is important to evaluate a technique tackling one of the three requirements on all three aspects. In my case, measuring the impact of model
+  Therefore, it is important to evaluate a technique tackling one of the three requirements on all three aspects. In our case, measuring the impact of model
   compression on accuracy and robustness as well. In the following sections, we give an overview of the techniques relevant to this work. 
 
 \subsection{Global Magnitude-based Pruning}\label{subsec:prune}
 
 There are many contemporary methods for model compression. The main four categories include network pruning, knowledge distillation, tensor decomposition,
-and quantization \cite{survey}, although it is also common to propose hybrid strategies. Network pruning refers to evaluating weights or groups of weights
-of the model based on a certain importance criteria and removing the ones which were considered the least important. This importance signal could weight
-magnitude, the sensitivity of loss with respect to the weight, or other heuristics. After pruning, a fine-tuning or retraining phase is applied using the 
+and quantization, although it is also common to propose hybrid strategies \cite{survey}. Network pruning refers to evaluating weights or groups of weights
+of the model based on a certain importance criteria and removing the ones which were considered the least important. This importance signal could be
+the magnitude of weights, the sensitivity of loss with respect to them, or other heuristics. After pruning, a fine-tuning or retraining phase is applied using the 
 remaining weights in order to refit the pruned model to the training data.
 When the magnitude is utilized for representing the importance of weights, the pruning step uses a threshold for comparison, and every weight with magnitude
 below the threshold gets removed. Global pruning refers to having only one threshold and using it across all layers, regardless of their shape and function
 (i.e. classifier layer, convolutional layer). If every layer has its separate, local threshold, the pruning is applied uniformly across the entire network,
-which can lead to sub-optimal sparsity and the increased complexity of tuning these thresholds for a deep network \cite{pruning_survey24}. In contrast, 
+which can lead to sub-optimal sparsity and to an increased complexity of tuning these thresholds for a deep network \cite{pruning_survey24}. In contrast, 
 global pruning enables layers with different roles (i.e. feature extractor, classifier) to contribute to the overall sparsity non-uniformly.
 
 
@@ -43,7 +43,7 @@ assumption may be violated due to distributional shifts in the test set. Althoug
 in recommendation or image classification systems, decreased accuracy in healthcare or self-driving cars could even result in fatalities.
 Therefore, the Out-of-Distribution (OOD) Generalization Problem has
 been formulated and an increasing number of methods and evaluation procedures have been developed accordingly \cite{oodgeneralization}. Popular categorization
-distinguishes shifts as either covariate or concept shifts. The former refers to change in the input features distribution $ P(x) $, while the latter indicates
+distinguishes shifts as either covariate or concept shifts. The former refers to change in the input features distribution $ P(X) $, while the latter indicates
 a different underlying concept or label mapping $P(Y | X)$ present compared to the one generating the training samples.
 
 Besides OOD inputs, an application-ready model is required to be robust to so-called adversarial inputs as well. By definition, adversarial inputs are 

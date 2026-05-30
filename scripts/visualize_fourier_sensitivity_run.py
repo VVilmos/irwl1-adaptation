@@ -18,8 +18,8 @@ _SPARSITY_PATTERN = re.compile(r"sparsity_(?P<sparsity>[0-9]+(?:\.[0-9]+)?)")
 
 def _parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="Visualize saved Fourier sensitivity heatmaps for one run")
-	parser.add_argument("--run-dir", type=Path, default=Path("results") / "fourier_sensitivity" / "run_01", help="Directory containing saved heatmaps")
-	parser.add_argument("--output-path", type=Path, default=Path("results") / "fourier_sensitivity" / "run_01" / "fourier_sensitivity_summary.png", help="Path for the combined figure")
+	parser.add_argument("--run-dir", type=Path, default=Path("results") / "fourier_sensitivity" / "run_03", help="Directory containing saved heatmaps")
+	parser.add_argument("--output-path", type=Path, default=Path("results") / "fourier_sensitivity" / "run_03" / "fourier_sensitivity_summary.png", help="Path for the combined figure")
 	parser.add_argument("--metadata", type=Path, default=None, help="Optional metadata CSV written by the evaluation script")
 	return parser.parse_args()
 
@@ -144,7 +144,7 @@ def _plot_summary(selected: pd.DataFrame, output_path: Path) -> None:
 
 	fig.colorbar(image, ax=axes[0, :].tolist(), shrink=0.82, label="Error ratio")
 	fig.colorbar(axes[1, 0].images[0], ax=axes[1, :].tolist(), shrink=0.82, label="Difference from dense baseline")
-	fig.suptitle("Fourier sensitivity heatmaps and dense-baseline deltas", y=1.02)
+	#fig.suptitle("Fourier sensitivity heatmaps and dense-baseline deltas", y=1.02)
 	output_path.parent.mkdir(parents=True, exist_ok=True)
 	fig.savefig(output_path, dpi=220, bbox_inches="tight")
 	plt.close(fig)

@@ -1,7 +1,7 @@
 \section{Experiments}\label{sec:exp}
 
 To evaluate the impact of gradual magnitude-based pruning on OOD and adversarial robustness, we conducted experiments using the
-ResNet20 architecture and the CIFAR-10 and CIFAR-10-C datasets. The datasets were presented in section \ref{subsec:cifar10c}.
+ResNet20 architecture and the CIFAR-10 and CIFAR-10-C datasets \cite{resnet}. The datasets were presented in section \ref{subsec:cifar10c}.
 
 The architecture of ResNet20 is presented in Table \ref{tab:resnet20}. $C(n)$ denotes 2D convolutional layers with $n$ output channels, $BN$ denotes
 batch normalization layers, $GAP$ represents a Global Average Pooling layer, while $FC(n)$ denotes a fully connected layer with $n$ output units. 
@@ -22,12 +22,12 @@ For gradual pruning, we applied a custom strategy which was inspired by the Iter
 the weights of the regularization term after each epoch, the regularization was more effective in pushing weights towards zero then common 
 $l1$-regularization. The training process consisted of the following phases: a "warm-up" phase of 20 epochs without the sparsifying regularization; 
 the "regularization" phase to drive weights towards zero while fitting the data; a pruning step where weights with magnitudes below a certain threshold
-were set to zero; finally a "re-fitting" phase were the remaining weights could be updated to refit the data without the constant pressure of 
+were set to zero; finally a "re-fitting" phase where the remaining weights could be updated to refit the data without the constant pressure of 
 the regularization term. As the process was gradual, these three phases were repeated until a sparsity level of $95\%$ was reached. For evaluation purposes, 
-models were saved at every $5\%$ step in sparsity. Note that regularization term was defined on individual weights, not groups of weights.
+models were saved at every $5\%$ step in sparsity. Note that the regularization term was defined on individual weights, not groups of weights.
 The additional hyperparameters are listed in Table \ref{tab:training_params} in Appendix \ref{sec:appendix}.
 
-\subsection{Sparsity-Robustness tradeoff}
+\subsection{Sparsity-Robustness Tradeoff}
 
 To distinguish the effect of pruning on test accuracy and robustness, I evaluated the pruned models on the original CIFAR-10 test set first.
 Figure \ref{fig:test_acc} shows how accuracy changes during the compression process at different sparsity levels. To present the central tendency as well,
@@ -39,7 +39,7 @@ Please note that at anchor point of $45\%$ sparsity, only one model was mapped a
 \begin{figure}[H]
     \includegraphics[width=0.6\linewidth]{figs/test_acc_scaled.png}
     \centering
-    \caption{Test accuracy of pruned ResNet20 on CIFAR-10 dataset.}
+    \caption{Test accuracy of pruned versions of ResNet20 on the CIFAR-10 dataset.}
     \label{fig:test_acc}
 \end{figure}
 
@@ -53,7 +53,7 @@ to compute the statistics based on the different runs.
 \begin{figure}[H]
     \includegraphics[width=1\linewidth]{figs/corupted_acc_scaled.png}
     \centering
-    \caption{Test accuracy of pruned ResNet20 on CIFAR-10-C dataset, averaged by corruption category across 5 severity levels.}
+    \caption{Test accuracy of pruned versions of ResNet20 on the CIFAR-10-C dataset, averaged by corruption category across 5 severity levels.}
     \label{fig:cifar10c_acc}
 \end{figure}
     
@@ -65,8 +65,8 @@ In other words, the pruned models are not more vulnerable to these corruptions t
 
 Regarding the outlier standard deviation of accuracies on noise corruptions, we may conclude that the robustness of the model
 to high-frequency perturbations (i.e. gaussian noise, shot noise, etc.) is more sensitive to the the initial random initialization. However, 
-this is not due to the pruning process, as the standard deviation appears to be similar across all sparsity levels. Therefore, the sensitivity of the model's
-robustness to high-frequency perturbations is likely an inherent property of the architecture, rather than a consequence of pruning.
+this is not due to the pruning process, as the standard deviation appears to be similar across all sparsity levels. Therefore, the sensitivity of the model's performance
+to high-frequency perturbations is likely an inherent property of the dataset and the training hyperparameters, rather than a consequence of pruning.
 
 Apart from performance on corrupted images, we can evaluate the robustness of the pruned models by examining the distance between decision boundaries.
 As mentioned in section \ref{subsec:ood&adv}, the norm of the minimal perturbation found by an adversarial attack is a good proxy for this distance.
@@ -77,43 +77,43 @@ run for 10 consecutive steps.
 \begin{figure}[H]
     \includegraphics[width=0.8\linewidth]{figs/norm_sparsity.png}
     \centering
-    \caption{Adversarial robustness of pruned ResNet20 on CIFAR-10 dataset, measured by the norm of the minimal pertubation found by FAB attack.}
+    \caption{Adversarial robustness of pruned ResNet20 on the CIFAR-10 dataset, measured by the norm of the minimal pertubation found by FAB attack.}
     \label{fig:fab_acc}
 \end{figure}
     
 Unlike the progression of test accuracies, the FAB norm starts to decrease earlier, after the $22\%$ sparsity anchor, and it decreases approximately
 linearly afterwards. This indicates that the pruning process slowly but surely compresses the average margin to the decision boundary, thus 
-making the model more vulnerable to small perturbations in its input. As the FAB attack is an iterative heuristic which find 
+making the model more vulnerable to small perturbations in its input. As the FAB attack is an iterative heuristic which finds
 approximations of the minimal perturbations, the high standard deviation may be reduced by increasing the number of steps the FAB algorithm can take.
 
-\subsection{Sensitivity analysis}
+\subsection{Sensitivity Analysis}
 
-To get more insight into how pruning affects OOD robustness, I utilized the Fourier sensitivity method described in section \ref{sec:fourier}.
+To get more insight into how pruning affects OOD robustness, we utilized the Fourier sensitivity method described in section \ref{sec:fourier}.
 Figure \ref{fig:sensitivity} presents two rows; the first row includes the Fourier heatmaps of the original dense model and five selected pruned models
 at different sparsity levels. The second row visualizes how pruning changes the baseline sensitivity of the dense model by 
-showing the difference between the heatmaps of the latter and the pruned models. Note that the heatmap does not show the error rate itself, but the normalized
+showing the difference between the heatmap of the latter and of the pruned models. Note that the heatmap does not show the error rate itself, but the normalized
 difference between  the error rate on the perturbed test set and the error rate on the original, clean test set. Therefore, brighter colors correspond to higher
-sensitivity to the corresponding Fourier basis perturbation. The reason behind plotting the normalized error difference instead of the errors on the perturbed test sets
- was due the continuous decrease of test accuracy of pruned models on the clean test set. 
- The aim of the plot was to visualize how the pruning process changes the sensitivity to distortions with specific frequencies and orientation, 
+sensitivity to the corresponding Fourier basis perturbation. The reason behind plotting the normalized error difference instead of the error rate on the perturbed test sets
+ was due to the continuous decrease of test accuracy of pruned models on the clean test set. 
+ The aim of the plot was to visualize how the pruning process changes the sensitivity to distortions with specific frequencies and orientations, 
  neglecting the trivial overall sensitivity increase it causes. Normalizing them to be on the same scale also serves this purpose.
-The heatmap was calculated based on only one pruning run and its corresponding models with a 
+The heatmap was calculated based only on one pruning run and its corresponding models with a 
 $L_2$ perturbation budget of $\epsilon=2.4$.
 
 \begin{figure}[H]
     \includegraphics[width=1\linewidth]{figs/fourier_diff_sensitivity_eps3*08.png}
     \centering
-    \caption{Sensitivity of pruned ResNet20 on CIFAR-10 dataset, measured by the norm of the minimal pertubation found by FAB attack.}
+    \caption{Sensitivity heatmaps corresponding to pruned versions of ResNet20 on the CIFAR-10 dataset.}
     \label{fig:sensitivity}
 \end{figure}
 
-By comparing the heatmaps of the first row, we can see that until the sparsity level of $84\%$, the two bright blobs with a half-mood shape
-remain relatively unchanged, although they appears to straighten out as sparsity increases. This indicates that the model does not loose its
+By comparing the heatmaps of the first row, we can see that until the sparsity level of $84\%$, the two bright blobs with a half-moon shape
+remain relatively unchanged, although they appear to straighten out as sparsity increases. This indicates that the model does not lose its
 robustness to low-frequency perturbations due to pruning, as the center of the heatmap remains dark. Moreover, we can interpret the bright blobs
-loosing their curvature as pruning degrades the model's robust to horizontal pixel shifts, while maintaining its robustness to vertical pixel shift.  
+loosing their curvature as pruning degrades the model's robust to horizontal pixel shifts, while maintaining its robustness to vertical pixel shifts.  
 Based the fourth image, the pruned model with sparsity level of $84.53\%$ appears the most robust compared to the dense model. On the other hand, 
 pruning beyond this level seems to cause a significant increase in sensitivity to all high-frequency perturbations corresponding to the bright
-circle in the heatmap. The last figures in the second row also indicates this sudden rise in sensitivity in general. 
+circle in the heatmap. The last figure in the second row also indicates this sudden rise of sensitivity in general. 
 
 Apart from the pruned model at extreme sparsity, we might conclude that pruning preserved the overall shape of the Fourier sensitivity heatmap, 
 thus maintaining the relative sensitivity to perturbations with different frequencies and orientations.
