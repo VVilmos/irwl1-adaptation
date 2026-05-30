@@ -37,7 +37,7 @@ def _load_model_from_checkpoint(checkpoint_path: Path, device: torch.device) -> 
 
 def _discover_checkpoints() -> list[Path]:
 	root = Path("models")
-	checkpoints = sorted(root.glob("run_*/checkpoint_*.pth"))
+	checkpoints = sorted(root.glob("weightdecay_run_*/checkpoint_*.pth"))
 	if not checkpoints:
 		checkpoints = sorted(root.rglob("checkpoint_*.pth"))
 	return checkpoints
@@ -75,7 +75,7 @@ def main() -> None:
 	mini_test_loader = fetch_cifar10_test_mini()
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	cifar10c_root = "data/CIFAR-10-C"
-	output_path = Path("results") / "resnet20_checkpoint_evaluations.csv"
+	output_path = Path("results") / "resnet20_weightdecay_checkpoint_evaluations.csv"
 	output_path.parent.mkdir(parents=True, exist_ok=True)
 	_configure_evaluation()
 

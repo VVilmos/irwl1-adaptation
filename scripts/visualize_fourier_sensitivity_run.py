@@ -19,7 +19,7 @@ _SPARSITY_PATTERN = re.compile(r"sparsity_(?P<sparsity>[0-9]+(?:\.[0-9]+)?)")
 def _parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="Visualize saved Fourier sensitivity heatmaps for one run")
 	parser.add_argument("--run-dir", type=Path, default=Path("results") / "fourier_sensitivity" / "run_03", help="Directory containing saved heatmaps")
-	parser.add_argument("--output-path", type=Path, default=Path("results") / "fourier_sensitivity" / "run_03" / "fourier_sensitivity_summary.png", help="Path for the combined figure")
+	parser.add_argument("--output-path", type=Path, default=Path("results") / "fourier_sensitivity" / "run_03" / "fourier_dff_sensitivity_summary.png", help="Path for the combined figure")
 	parser.add_argument("--metadata", type=Path, default=None, help="Optional metadata CSV written by the evaluation script")
 	return parser.parse_args()
 
@@ -27,12 +27,12 @@ def _parse_args() -> argparse.Namespace:
 def _discover_heatmaps(run_dir: Path) -> pd.DataFrame:
 	metadata_rows: list[dict[str, object]] = []
 
-	for npy_path in sorted(run_dir.rglob("*_ratio_heatmap.npy")):
+	for npy_path in sorted(run_dir.rglob("*_difference_heatmap.npy")):
 		match = _SPARSITY_PATTERN.search(npy_path.stem)
 		sparsity = float(match.group("sparsity")) if match else np.nan
 		metadata_rows.append(
 			{
-				"checkpoint_name": npy_path.stem.replace("_ratio_heatmap", ""),
+				"checkpoint_name": npy_path.stem.replace("_difference_heatmap", ""),
 				"checkpoint_path": str(npy_path),
 				"sparsity": sparsity,
 			}
@@ -53,7 +53,7 @@ def _load_metadata(metadata_path: Path) -> pd.DataFrame:
 	if "sparsity" not in frame.columns:
 		raise ValueError(f"Metadata file {metadata_path} does not contain a sparsity column")
 	frame = frame.copy()
-	frame["checkpoint_name"] = frame["checkpoint_path"].map(lambda value: Path(str(value)).stem.replace("_ratio_heatmap", "")) if "checkpoint_path" in frame.columns else frame["heatmap_npy"].map(lambda value: Path(str(value)).stem.replace("_ratio_heatmap", ""))
+	frame["checkpoint_name"] = frame["checkpoint_path"].map(lambda value: Path(str(value)).stem.replace("_difference_heatmap", "")) if "checkpoint_path" in frame.columns else frame["heatmap_npy"].map(lambda value: Path(str(value)).stem.replace("_difference_heatmap", ""))
 	frame["checkpoint_path"] = frame["heatmap_npy"]
 	return frame.sort_values(["sparsity", "checkpoint_name"], na_position="last").reset_index(drop=True)
 
@@ -100,8 +100,17 @@ def _load_heatmap(path: str | Path) -> np.ndarray:
 	return array
 
 
+def _normalize_heatmap(heatmap: np.ndarray) -> np.ndarray:
+	minimum = float(np.min(heatmap))
+	maximum = float(np.max(heatmap))
+	span = maximum - minimum
+	if span <= 0:
+		return np.zeros_like(heatmap, dtype=float)
+	return (heatmap - minimum) / span
+
+
 def _plot_summary(selected: pd.DataFrame, output_path: Path) -> None:
-	heatmaps = [_load_heatmap(path) for path in selected["checkpoint_path"]]
+	heatmaps = [_normalize_heatmap(_load_heatmap(path)) for path in selected["checkpoint_path"]]
 	dense_heatmap = heatmaps[0]
 	differences = [heatmap - dense_heatmap for heatmap in heatmaps]
 
@@ -142,9 +151,9 @@ def _plot_summary(selected: pd.DataFrame, output_path: Path) -> None:
 		axes[1, column_index].set_title(f"{label} - dense")
 		axes[1, column_index].axis("off")
 
-	fig.colorbar(image, ax=axes[0, :].tolist(), shrink=0.82, label="Error ratio")
+	fig.colorbar(image, ax=axes[0, :].tolist(), shrink=0.82, label="Normalized sensitivity (per-heatmap min-max)")
 	fig.colorbar(axes[1, 0].images[0], ax=axes[1, :].tolist(), shrink=0.82, label="Difference from dense baseline")
-	#fig.suptitle("Fourier sensitivity heatmaps and dense-baseline deltas", y=1.02)
+	#fig.suptitle("Normalized Fourier sensitivity heatmaps and dense-baseline deltas", y=1.02)
 	output_path.parent.mkdir(parents=True, exist_ok=True)
 	fig.savefig(output_path, dpi=220, bbox_inches="tight")
 	plt.close(fig)
@@ -157,7 +166,7 @@ def main() -> None:
 	else:
 		frame = _discover_heatmaps(args.run_dir)
 
-	selected = _select_representative_rows(frame, target_count=5)
+	selected = _select_representative_rows(frame, target_count=6)
 	_plot_summary(selected, args.output_path)
 	print(f"[SAVE] Wrote summary figure to {args.output_path}")
 

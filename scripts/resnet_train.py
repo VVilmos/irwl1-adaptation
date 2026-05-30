@@ -28,7 +28,7 @@ def _configure_training() -> None:
 	config.MODEL = "ResNet20"
 	config.WANDB_MODE = "offline"
 	config.FAB_STEPS = 5
-	config.WEIGHT_DECAY = 0.0
+	config.WEIGHT_DECAY = 1e-4
 
 
 def _parse_args() -> argparse.Namespace:
@@ -54,6 +54,11 @@ def _build_model(device: torch.device) -> torch.nn.Module:
 	return model
 
 
+def _set_optimizer_weight_decay(optimizer: torch.optim.Optimizer, weight_decay: float) -> None:
+	for param_group in optimizer.param_groups:
+		param_group["weight_decay"] = weight_decay
+
+
 def _save_checkpoint(output_dir: Path, checkpoint_index: int, sparsity: float, model: torch.nn.Module, phase: str) -> Path:
 	output_dir.mkdir(parents=True, exist_ok=True)
 	checkpoint_path = output_dir / f"checkpoint_{checkpoint_index:02d}_sparsity_{sparsity:.2f}.pth"
@@ -70,12 +75,12 @@ def _save_checkpoint(output_dir: Path, checkpoint_index: int, sparsity: float, m
 
 
 def _train_single_run(run_id: int, train_loader, val_loader, device: torch.device) -> None:
-	run_dir = Path("models") / f"run_{run_id:02d}"
+	run_dir = Path("models") / f"weightdecay_run_{run_id:02d}"
 	run_dir.mkdir(parents=True, exist_ok=True)
 	print(f"[RUN {run_id}] Starting in {run_dir}")
 
 	model = _build_model(device)
-	optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+	optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
 
 	# WARMUP
 	config.EPOCHS = config.NUM_PRETRAIN_EPOCHS
@@ -87,13 +92,14 @@ def _train_single_run(run_id: int, train_loader, val_loader, device: torch.devic
 		apply_reg=False,
 		is_new_run=True,
 		run_name=f"iterL1_run_{run_id:02d}",
-		weight_decay=False,
+		weight_decay=True,
 	)
 
 	sparsity = calculate_real_sparsity(model)
 	_save_checkpoint(run_dir, 0, sparsity, model, "warmup")
 	previous_saved_sparsity = sparsity
 	checkpoint_index = 1
+	_set_optimizer_weight_decay(optimizer, 0.0)
 
 	while sparsity <= MAX_SPARSITY:
 
@@ -121,7 +127,7 @@ def _train_single_run(run_id: int, train_loader, val_loader, device: torch.devic
 
 		print(f"[RUN {run_id}] Recovery")
 		config.EPOCHS = config.NUM_RECOVERY_EPOCHS
-		optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE)
+		optimizer = torch.optim.Adam(model.parameters(), lr=config.LEARNING_RATE, weight_decay=config.WEIGHT_DECAY)
 		model, wandb_run = train(
 			model,
 			train_loader,
@@ -131,7 +137,7 @@ def _train_single_run(run_id: int, train_loader, val_loader, device: torch.devic
 			is_new_run=False,
 			run_name=f"iterL1_run_{run_id:02d}",
 			run=wandb_run,
-			weight_decay=False,
+			weight_decay=True,
 		)
 
 		sparsity = calculate_real_sparsity(model)
