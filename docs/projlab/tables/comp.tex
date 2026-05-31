@@ -1,0 +1,22 @@
+\begin{table}[H]
+    \centering
+    \renewcommand{\arraystretch}{1.3}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{@{}llcccccc@{}}
+        \toprule
+        \textbf{Transition} & \textbf{Rewinding} & \textbf{Total Epochs} & \textbf{Pruning Steps} & \textbf{Refitting Length} & \textbf{Regularization Length} & \textbf{Sparsity (\%)} & \textbf{Test Accuracy (\%)} \\
+        \midrule
+        \multirow{2}{*}{Smooth} 
+        & Rewind    & $959.13 \pm 217.68$ & $12.67 \pm 3.42$ & $18.42 \pm 0.46$ & $56.93 \pm 3.62$ & $91.48 \pm 0.46$ & $67.25 \pm 1.18$ \\
+        & No Rewind & $1251.53 \pm 271.06$ & $12.67 \pm 3.42$ & $42.21 \pm 4.07$ & $56.93 \pm 3.68$ & $91.48 \pm 0.46$ & $69.47 \pm 3.22$ \\
+        \midrule
+        \multirow{2}{*}{Discrete} 
+        & Rewind    & $638.13 \pm 138.17$ & $12.67 \pm 3.42$ & $18.58 \pm 0.65$ & $31.20 \pm 2.61$ & $91.54 \pm 0.49$ & $66.62 \pm 0.90$ \\
+        & No Rewind & $925.60 \pm 187.26$ & $12.67 \pm 3.42$ & $42.41 \pm 3.96$ & $30.85 \pm 2.50$ & $91.55 \pm 0.44$ & $71.06 \pm 2.12$ \\
+        \bottomrule
+    \end{tabular}%
+    }
+    \
+    \caption{Performance and Efficiency Metrics across Pruning Configurations (Mean $\pm$ Standard Deviation). Results are aggregated over 15 runs.}
+    \label{tab:pruning_metrics_hierarchical}
+\end{table}

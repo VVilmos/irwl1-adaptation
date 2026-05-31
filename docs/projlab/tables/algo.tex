@@ -1,0 +1,40 @@
+\begin{table}[H]
+    \centering
+    \renewcommand{\arraystretch}{1}
+    \begin{tabular}{@{}ll@{}}
+        \toprule
+        \multicolumn{2}{l}{\textbf{Algorithm 1} Iterative Pruning Framework} \\
+        \midrule
+        \textbf{Input:}  & Training dataset $\mathcal{D}_{train}$, Validation dataset $\mathcal{D}_{val}$ \\
+                         & Target sparsity $P$, Patience epochs $x$, Sparsity tolerance $E$ \\
+                         & Global magnitude threshold $\tau$ \\
+                         & Update interval $n$, \\
+        \textbf{Output:} & Pruned weights $W^*$, Final binary mask $Z^*$ \\
+        \midrule
+        \multicolumn{2}{l}{\textbf{Phase 1: Dense Pretraining}} \\
+        1: & Initialize dense weights $W^{(0)}$ \\
+        2: & Train $W^{(0)}$ minimizing cross-entropy loss $\mathcal{L}_{CE}$ on $\mathcal{D}_{train}$ \\
+        3: & At epoch $e$, save current weights to checkpoint $\hat{W}$ \\
+        \midrule
+        \multicolumn{2}{l}{\textbf{Phase 2: Iterative Pruning}} \\
+        4: & Initialize current sparsity $p \gets 0$, binary mask $Z \gets \mathbf{1}$, and penalty $A \gets \mathbf{1}$ \\
+        5: & \textbf{while} $p < P$ \textbf{do} \\
+        \multicolumn{2}{l}{\quad \textit{Phase 2.1: Regularization}} \\
+        6: & \quad Mini-batch training of $W$ on $\mathcal{D}_{train}$ minimizing $\mathcal{L} = \mathcal{L}_{CE} + \sum (A \odot \lvert W \rvert)$ \\
+        7: & \quad Update penalty $A$ according to Equation 3 \\
+        8: & \quad ............................. \\
+        9: & \quad \textbf{if} $\Delta p_t = (p_t - p_{t-1}) < \epsilon$ for $x$ consecutive epochs \textbf{then} \\
+        10:& \quad \quad \textbf{break} mini-batch training \\
+        11:& \quad \textbf{end if} \\
+        \multicolumn{2}{l}{\quad \textit{Phase 2.2: Mask Update \& Optimization}} \\
+        12:& \quad $Z \gets (\lvert W \rvert > \tau)$ \\
+        13:& \quad Restore and mask checkpoint weights: $W \gets \hat{W} \odot Z$ \\
+        14:& \quad Optimize weights: $W \gets \arg\min_{W} \mathcal{L}_{CE}(W, \mathcal{D}_{train})$ \\
+        15:& \quad $p \gets 1 - \frac{\|Z\|_0}{N}$ \quad \textit{(where $N$ is the total number of parameters)} \\
+        16:& \textbf{end while} \\
+        17:& \textbf{return} $W, Z$ \\
+        \bottomrule
+    \end{tabular}
+    \caption{Algorithm: Iterative Pruning with Weighted $L_1$ Regularization}
+    \label{tab:pruning_algorithm}
+\end{table}

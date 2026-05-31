@@ -1,9 +1,13 @@
 \section{Experiments}\label{sec:exp}
 
-To evaluate the impact of gradual magnitude-based pruning on OOD and adversarial robustness, we conducted experiments using the
-ResNet20 architecture and the CIFAR-10 and CIFAR-10-C datasets. The datasets were presented in section \ref{subsec:cifar10c}.
+In the following section we present the experimental results of the evaluation of the proposed pruning algorithm and its design choices.
+We first describe the setup of the experiments, including the architecture, the dataset, and the hyperparameters of the training.
 
-The architecture of ResNet20 is presented in Table \ref{tab:resnet20}. $C(n)$ denotes 2D convolutional layers with $n$ output channels, $BN$ denotes
+Our benchmark task was image classification on the CIFAR-10 dataset \cite{cifar10}, which consists of 60,000 32x32 color images in 10 classes,
+with 6,000 images per class. The dataset is split into a training set of 50,000 images and a test set of 10,000 images.
+
+The utilized classification model was ResNet20 \cite{resnet20} which is presented in Table \ref{tab:resnet20}.
+ $C(n)$ denotes 2D convolutional layers with $n$ output channels, $BN$ denotes
 batch normalization layers, $GAP$ represents a Global Average Pooling layer, while $FC(n)$ denotes a fully connected layer with $n$ output units. 
 To mitigate the vanishing gradient problem, the architecture includes residual connections in each residual block, which are denoted by square brackets.
 
@@ -18,13 +22,74 @@ To mitigate the vanishing gradient problem, the architecture includes residual c
 \label{tab:resnet20}
 \end{table}
 
-For gradual pruning, we applied a custom strategy which was inspired by the Iteratively Reweighted $l1$-minimization problem \cite{boyd}. By updating 
-the weights of the regularization term after each epoch, the regularization was more effective in pushing weights towards zero then common 
-$l1$-regularization. The training process consisted of the following phases: a "warm-up" phase of 20 epochs without the sparsifying regularization; 
-the "regularization" phase to drive weights towards zero while fitting the data; a pruning step where weights with magnitudes below a certain threshold
-were set to zero; finally a "re-fitting" phase were the remaining weights could be updated to refit the data without the constant pressure of 
-the regularization term. As the process was gradual, these three phases were repeated until a sparsity level of $95\%$ was reached. For evaluation purposes, 
-models were saved at every $5\%$ step in sparsity. Note that regularization term was defined on individual weights, not groups of weights.
-The additional hyperparameters are listed in Table \ref{tab:training_params} in Appendix \ref{sec:appendix}.
+For gradual pruning, we applied a custom strategy presented in Section \ref{subsec:irl1}. The penalty update (Eq. \ref{eq:weight_update})
+was applied after every epoch, while the early stopping criterion in the regularization phase was applied with a tolerance $E$ of $0.5\%$
+and a patience of 25 epochs. 
+The global pruning threshold $\tau$ was set $1e-5$ which resulted in an average of $20\%$ increase in sparsity after each pruning step. 
 
-\subsection{Sparsity-Robustness tradeoff}
+We examined four variations of the pruning process based on the design choices described in Chapter \ref{sec:method}. 
+The iterative decaying of $\epsilon$ and increasing of $\lambda$ - which is referred to as the \textit{smooth} method - was following a sigmoid function
+with steepness of 10 and a center of 0.6. On the other hand, the \textit{discrete} method was defined by setting $\epsilon$ and $\lambda$ 
+to their final values at the first epoch of the regularization phase. 
+The initial and final values of these parameters are listed in Table \ref{tab:training_params} in Appendix \ref{sec:appendix}. 
+
+Regarding the weight rewinding design choice, the \textit{rewind} strategy is described as Step 13 in Algorithm \ref{tab:pruning_algorithm},
+while the \textit{no-rewind} strategy is defined by skipping this step and letting the remaining weights to be updated from their current state during the refitting phase.
+
+Note that regularization term was defined on individual weights, not groups of weights.
+The additional hyperparameters are listed in Table \ref{tab:training_params}.
+
+\subsection{Length of Pruning Process}
+
+To compare feasibility these four variations, we executed 15 runs of each variation with a different random seed and calculated metrics
+related to the length of the pruning process. The sample mean and standard deviation of each metric are listed in Table \ref{tab:comp}. Each training
+was run until a target sparsity level of $90\%$ was reached. \textit{Total epochs} refers to the entire length of the process, while refitting and regularization lengths refer to the
+average number of epochs spent in Step 6 and Step 14 of Algorithm \ref{tab:pruning_algorithm}, respectively. \textit{Pruning steps} denote the average number of updating 
+the binary mask $Z$ in Step 12. At the end of the process, the final model with sparsity just above the target sparsity is evaluated on the test set. This final actual sparsity and
+top-1 accuracy is reported in the last two columns. 
+
+
+By comparing the different length metrics across the smooth and discrete methods, we can see that the scheduling 
+of $\epsilon$ and $\lambda$ leads to significantly longer overall length. This is primarily because of the longer regularization phases, which indicates that the convergence of
+the thresholded sparsity takes longer. This is also visualized in the training curves of Figure \ref{fig:schedule}. Despite the longer regularization phase, the smooth methods
+does not achieve significantly higher test accuracies. More specifically, in the case of the no-rewind strategy, discrete method seems to be more effective in 
+maintaining accuracy, while the smooth methods performs better in the case of the rewind strategy.
+
+\include{tables/comp.tex}
+
+Regarding the difference caused by weight rewinding, we can observe that weight rewinding reduces the length of the refitting phase by more that $50\%$. 
+A bit contradicting to the common belief that weight rewinding leads to better performance, the no-rewind strategy achieves higher test accuracies in both cases of applying smooth 
+or discrete transition between the refitting and regularization phases. On the other hand, we may conclude that the benefit of reducing the length of
+the refitting phase by weight rewinding outweighs the ca. $2-5\%$ degradation in test accuracy.
+
+\subsection{Sparsity-Accuracy Tradeoff}
+
+\begin{figure}[H]
+    \includegraphics[width=0.8\linewidth]{figs/weightwise2.png}
+    \centering
+    \caption{Test accuracy of pruned versions of ResNet20 on the CIFAR-10 dataset, pruned by four variations of the proposed pruning strategy.}
+    \label{fig:test_acc}
+\end{figure}
+
+
+\subsection{Sparsity-Robustness Tradeoff}
+
+Besides the test accuracy across the pruning stages, we compared the different variations of the pruning process along metrics related to 
+model robustness. The definition of the average Jacobian Norm of a given model is presented in Equation \ref{eq:jacobian_norm} from the previous
+Chapter. To capture how pruning changes the smoothness of the model's input-output mapping, we evaluated the same 15 runs of
+each pruning variation during their training process and computed the this metric. Figure \ref{fig:jacobian_norm} shows how the average Jacobian norm
+changed across the sparsity levels. Note that models were evaluated after the refitting phase.
+
+\begin{figure}[H]
+    \includegraphics[width=0.8\linewidth]{figs/norm2.png}
+    \centering
+    \caption{Average Jacobian norm of pruned versions of ResNet20 on the CIFAR-10 dataset.}
+    \label{fig:jacobian_norm}
+\end{figure}
+
+\begin{figure}[H]
+    \includegraphics[width=0.8\linewidth]{figs/condition10.png}
+    \centering
+    \caption{OOD accuracy of pruned versions of ResNet20 on the CIFAR-10-C dataset.}
+    \label{fig:ood_acc}
+\end{figure}

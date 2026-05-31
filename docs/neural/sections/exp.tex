@@ -3,7 +3,7 @@
 To evaluate the impact of gradual magnitude-based pruning on OOD and adversarial robustness, we conducted experiments using the
 ResNet20 architecture and the CIFAR-10 and CIFAR-10-C datasets. The datasets were presented in section \ref{subsec:cifar10c}.
 
-The architecture of ResNet20 is presented in Table \ref{tab:resnet20}. $C(n)$ denotes 2D convolutional layers with $n$ output channels, $BN$ denotes
+The architecture of ResNet20 \cite{resnet20} is presented in Table \ref{tab:resnet20}. $C(n)$ denotes 2D convolutional layers with $n$ output channels, $BN$ denotes
 batch normalization layers, $GAP$ represents a Global Average Pooling layer, while $FC(n)$ denotes a fully connected layer with $n$ output units. 
 To mitigate the vanishing gradient problem, the architecture includes residual connections in each residual block, which are denoted by square brackets.
 

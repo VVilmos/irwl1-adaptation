@@ -35,5 +35,103 @@ below the threshold gets removed. Global pruning refers to having only one thres
 which can lead to sub-optimal sparsity and the increased complexity of tuning these thresholds for a deep network \cite{pruning_survey24}. In contrast, 
 global pruning enables layers with different roles (i.e. feature extractor, classifier) to contribute to the overall sparsity non-uniformly.
 
+\subsection{Weight and Learning Rate Rewinding}\label{subsec:rewind}
 
-\subsection{Iteratively Reweighted $l_1$ minimization}\label{subsec:irl1}
+\subsection{Sparsity-enhancing Regularization}
+In the field of deep learning, regularization aims at reducing the generalization error of the model, often at the expense of the training error
+\cite{Goodfellow}. This mostly involves some modification made to the training algorithm, the training dataset or the way the output model is used. 
+One common regularization technique is adding a norm penalty term to the objective function which expresses a prior belief about the weights of the
+final network. Injecting some prior knowledge into the training process could also be employed via adding constraints to the optimization algorithm, 
+augmenting the dataset by applying transformations on the existing samples which the model must be invariant to, or sharing weights across different
+parts of the network.    
+
+As the use of norm penalties for model compression purposes is an established practice, I used the same approach. The general form of the cost
+function $C$ in the case of supervised learning can be written as: 
+\begin{equation}
+  C(W) = \sum_{i} \mathcal{L}(f(x_i, W), d_i) + \lambda \cdot \mathcal{H}(W)
+\label{eq:reg_cost}
+\end{equation}
+
+where $W$ denotes the parameters of the neural network, $\mathcal{L}$ denotes the loss function used for training, function $f$ is the output of the
+network, $x_i$ is the training sample and $d_i$ is the corresponding target. The regularization term consists of a function of the weights denoted 
+by $\mathcal{H}(W)$, and a coefficient $\lambda$ which determines the strength or importance of regularization compared to the performance of the 
+model on the training samples.
+ 
+In case of network pruning, our general assumption is that there is a sparse subnetwork inside the dense neural network which could achieve the same 
+accuracy as the dense network when retrained in isolation (which means training it further after dropping the rest of the units from the dense 
+network) \cite{winningticket}. Hence, the penalty term must represent the belief that the number of nonzero weights in the initial dense network 
+should be as high as possible. Although finding the aforementioned sparse subnetwork is the primary goal of network pruning, the penalty term 
+should not dominate the loss term in the objective to enable learning the task at hand.
+
+\subsection{Iteratively Reweighted $l_1$ Minimization}\label{subsec:irl1}
+
+As L0 regularization results in a non-differentiable cost function, it is common to use convex relaxtions of it, such as L1 regularization.
+Besides L1, there are non-convex functions which better approximate the L0 term, such as the log-sum function visualized in Figure \ref{fig:logsum}.
+
+\begin{figure}[H]
+    \includegraphics[width=0.5\linewidth]{figs/logsum.png}
+    \centering
+    \caption{Comparison of L0, L1 and log-sum functions.}
+    \label{fig:logsum}
+\end{figure}
+
+As the figure shows, the \textit{log-sum} function approximates the L0 penalty term better; it penalizes smaller weights more,
+ as the magnitude of the gradient increases as it approaches zero (from both sides).
+Boyd et. al. \cite{boyd} proposes an iterative algorithm for reweighted L1 minimization, which will be referred to as 
+\textit{Iterative Reweighted $l_1$ Minimization } (IRL1) in this document. The subject of this paper is Compressed Sensing which is a subfield 
+of signal processing aiming to reconstruct a signal vector $x_0 \in R^n$ from measurements $y = \Phi x_0$ where $\Phi \in R^{m\times n}$
+and $m < n$. As there are fewer measurements than the dimension of the unknown signal, there are infinite number of possible solutions to $x_0$.
+The main result of compressed sensing is that the signal $x_0$ can be reconstructed if it is sparse in some domain. There are more conditions
+that have to be met to reconstruct the sparse signal, but these go beyond the scope of this work. The reconstruction is done by minimizing the
+L1 norm of $x_0$ while using equations of $y=\Phi x_0$ as constraints. Authors aimed to improve upon the utilization of the L1 norm in terms of the sparsity
+achieved in the reconstructed signal. They showed that solving a sequence of weighted L1 minimization problems finds a local minimum of the concave log-sum
+function. As previously mentioned, the log-sum function is a better approximation of the L0 term, so it is more effective in sparsifying the
+reconstruction than the L1 term. Thus, the adoption of this algorithm on the regularization term used for network pruning could potentionally find a
+smaller subnetwork in the initial dense network.  
+
+As the experiments will be conducted on a convolutional network, the use of IRL1 is described in terms of weight tensors of a convolutional layer.
+The weighted L1 term can be written as:   
+\begin{equation}
+ \mathcal{H}(W^{(\ell)}) = \sum_{l,i, j} \sum_{u,v} A^{(\ell)}_{i,j,u,v} \odot\big| W^{(\ell)}_{i,j}(u,v) \big|
+\label{eq:wl1_term}
+\end{equation}
+
+where $A^{(\ell)}$ is the tensor of weights used to balance the penalty induced by network weight magnitudes in layer $\ell$. 
+It has the same dimension as the weight tensor of the convolutional layer and $\odot$ denotes the element-wise multiplication between tensors
+$A^{(\ell)}$ and $W^{(\ell)}$.  As both the weights of the network and the weights of the regularization get updated, let $k$ denote the current
+iteration. Before the first iteration, all regularization weights are initialized as 1. Then after a few gradient descent steps, these weights
+are updated as follows:
+\begin{equation}
+ A_{i,j,u,v}^{(\ell, k+1)} = \frac{1}{\big|W^{(\ell, k)}_{i,j,u,v} \big| + \epsilon}
+\label{eq:weight_update}
+\end{equation}
+
+where $\epsilon$ represents a small nonzero number which prevents division by zero and balances the extent to which small weights are penalized. 
+
+Figure \ref{fig:epsilon} depicts three final weight distributions of a convolutional layer corresponding to IRL1 runs with different 
+$\epsilon$ values. The additional distribution at the left shows the final distribution when training the layer without any regularization.
+
+\begin{figure}[H]
+    \includegraphics[width=1\linewidth]{figs/eps2.png}
+    \centering
+    \caption{Final weight distributions of a convolutional layer corresponding to IRL1 runs with different $\epsilon$ values.}
+    \label{fig:epsilon}
+\end{figure}
+
+Not surprisingly, the distribution in blue resembles a normal distribution. IRL1 regularization with the largest value of $\epsilon$
+pushed the whole distribution towards zero, similarly to L1 regularization. On the other hand, the rightmost distribution corresponding to the 
+smallest $\epsilon$ value has produces a spike in a small zero-centered interval, thus resembling the application of a hard thresholding operator.
+The hard thresholding operator is usually how L0 regularization is implemented in the context of network pruning. 
+Hence, the greater the value of $\epsilon$, the better the IRL1 algorithm resembles L1 minimization, while smaller $\epsilon$ values make the
+effect of IRL1 more similar to L0 minimization. 
+
+The experiments done in \cite{boyd} kept $\epsilon$ constant, but dynamically adjusting it to account for the dynamics of training could also be a valid
+strategy. 
+
+Another hyperparameter of this method is the frequency of updating tensor $A$. There are no guidelines for it in \cite{boyd}, as it is done
+after convergence of the weighted L1 minimization. In our case, the non-convex objective function of training the neural network never converges,
+so an update frequency has to be set heuristically. If the L1 term is reweighted too often, it may destabilize training as the optimizer would 
+face a frequently-changing objective function. On the other hand, if the update interval is too long, the optimization may find a dense solution 
+with training error too low for the reweighted L1 term to induce sparsity. Different sparsity curves - captured during the proposed pruning process in
+ Chapter \ref{sec:method} -
+corresponding to different update frequencies are compared in Appendix \ref{sec:appendix} to provide some intuition on the effect of this hyperparameter.

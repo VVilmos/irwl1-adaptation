@@ -1,3 +1,108 @@
 \section{Methodology}\label{sec:method}
 
-In this section I present the benchmark dataset and adversarial algorithm utilized to evaluate OOD and adversarial robustness of a (pruned) network.
+In this section we present the proposed gradual pruning strategy utilizing the Iteratively Rewighted $l_1$ Minimization algorithm presented in Section
+\ref{subsec:irl1}. Additionally, we describe two design choices and their motivations in the pruning process.
+
+\subsection{IRL1 Regularization}
+
+As explained in previous sections, utilizing a sparsity-enhancing regularization term in the cost function forces the optimization process
+to find a sparser model than the initial one while fitting the data. The IRL1 algorithm enables us to approximate the most effective regularization term,
+the $l_0$ norm penalty term using gradient descent optimization. Regarding weight pruning methods, applying a global threshold for pruning
+facilitates sparser but accurate models due its flexibility in enhancing the sparsity of layers with different positions in the network unevenly.  
+By applying the threshold multiple times, the initial dense model can be gradually compressed to a desired sparsity level.
+
+Algorithm \ref{tab:pruning_algorithm} blends these two techniques into a single iterative pruning framework. The algorithm consists of
+two phases. The first phase is a pre-training phase where the initial dense model is trained using the standard cross-entropy loss function for
+$e$ epochs. After this, the resulting weights $\hat{W}$ - and optimizer specific buffers -  are saved as a checkpoint
+
+The second phase is the main iterative pruning phase, where the model is gradually compressed to the target sparsity level $P$. It consists of two
+sub-phases. The first one is defined as the regularization phase, where the model is trained using the cost function of Eq. \ref{eq:reg_cost} with 
+the weighted $l_1$ regularization term defined in Eq. \ref{eq:wl1_term}. The penalty weights $A^{(\ell)}$ are updated after $n$ consecutive
+epochs, according to Eq. \ref{eq:weight_update}.
+
+To eliminate the hyperparameter related to the length of the regularization phase, an early-stopping criterion is applied based on
+the difference in sparsity $\Delta p_t$ between two consecutive epochs. 
+If the increase in sparsity is smaller than a predefined tolerance $\epsilon$ for $m$ consecutive epochs, then 
+the regularization phase is stopped and the second sub-phase starts.
+
+After updating the binary mask $Z$ based on the global threshold $\tau$ and the regularized weights $W$, a re-fitting iteration is applied
+to let the remaining weights adapt to the new structure and recover accuracy. After the convergence of the latter training, 
+the achieved sparsity is compared to the target sparsity $P$. If the current sparsity $p$ is below the target, Phase 2 is repeated.
+
+As discussed in Section \ref{subsec:rewind}, rewinding the remaining weights after pruning to states from a dense training checkpoint can
+lead to better performance than fine-tuning the pruned model from its current state. Therefore, the proposed algorithm
+restores the weights to checkpoint $\hat{W}$ after each pruning step, while also applying the newly discovered mask $Z$. Note that this rewinding step
+is one of the design choices whose benefits and drawback we evaluated during the experiments.
+
+\include{tables/algo}
+
+
+\subsection{Scheduling $\epsilon$ and $\lambda$}
+
+Besides weight rewinding, the other design choices we focused on were the iterative decaying of $\epsilon$ and iterative increasing of $\lambda$ parameters.
+The motivation behind this scheduling is to achieve a smoother transition from training on just the fidelity term to training 
+on the cost function with the additional regularization term. By gradually increasing the pressure that regularization imposes on the weights,
+we can avoid the optimization process being overwhelmed by the regularization term at the beginning of the regularization phase. 
+
+To visualize the effect of introducing this smooth transition, we inspected the dynamics of the thresholded sparsity curve during the
+gradual pruning process. The thresholded sparsity is defined as the percentage of weights that are below the global threshold $\tau$ at each epoch.
+
+Figure \ref{fig:schedule} shows the different dynamics in the thresholded sparsity of the whole model among the aforementioned two regularization strategies.
+
+\begin{figure}[H]
+    \includegraphics[width=0.8\linewidth]{figs/curve.png}
+    \centering
+    \caption{Scheduling of $\epsilon$ and $\lambda$ during the training process.}
+    \label{fig:schedule}
+\end{figure}
+
+We can conclude that continuously decaying $\epsilon$ and increasing $\lambda$ leads to a more stable optimization process. Based on 
+the dynamics of the sparsity curve, scheduling these parameters achieves a smoother increase, while the discrete step 
+makes the sparsity oscillate. The latter is due to gradients from the fidelity term being close to zero at the beginning of the regularization phase, 
+as the weights are converged to a local minimum by the end of the re-fitting phase. Hence, in the first mini-batch update of the first epoch of
+regularization the optimizer has a history of near-zero gradients so the optimizer
+takes a large, unnormalized step in the direction of the regularization term gradient, while neglecting the fidelity term gradient and pushing
+a large group of weights below the threshold. Then, in the next mini-batch update, the data loss gradients are no longer close to zero, 
+and they pull the weights back up. By the end of the first regularization epoch, this oscillation is dampened by the optimizer's momentum, 
+but it still leads to a significant jump in the thresholded sparsity. As the regularization phase continues, weights near the threshold are pushed 
+below and above the threshold alternately, leading to the observed oscillation in the sparsity curve.
+
+On the other hand, the scheduling strategy eliminates the effect of unnormalized gradient steps and achieves a slower but more
+stable increase in sparsity.
+
+If our assumption is that a smoother increase in sparsity indicates that regularization does not overwhelm the fidelity term of the loss function, and enables
+the optimization process to find a better sparser architecture, then the scheduling strategy should achieve higher accuracy at the same sparsity level
+than its discrete counterpart.
+
+\subsection{Robustness Metrics}
+To facilitate a broader comparison of the two strategies, we utilized two complementary metrics regarding model robustness. The first one
+measures the smoothness of the input-output mapping the network implements.
+
+Let $f(x; W) \in \mathbb{R}^C$ denote the neural network's output logits for a given input sample $x \in \mathbb{R}^D$, parameterized by the weights $W$. To evaluate the smoothness of the learned input-output mapping, we analyze the sensitivity of the network to local input perturbations.
+
+We define the expected smoothness metric, $\bar{\mathcal{J}}_{\mathrm{smooth}}$, as the average Frobenius norm of the input Jacobian across the dataset $\mathcal{D}_{\mathrm{train}}$:
+\begin{equation}
+    \bar{\mathcal{J}}_{\mathrm{smooth}} = \mathbb{E}_{x \sim \mathcal{D}_{\mathrm{train}}} \left[ \left\| \frac{\partial f(x; W)}{\partial x} \right\|_F \right]
+\end{equation}
+
+A lower value of $\bar{\mathcal{J}}_{\mathrm{smooth}}$ implies a lower upper bound on the empirical Lipschitz constant, indicating that the network implements
+a smoother, more robust mapping from the input space to the output logits.
+
+The second metric aims to quantify how the learned weight matrices of the network amplify noise or small changes in the input.
+
+Let $W$ be the weight matrix of a given layer. The effective condition number, denoted as $\kappa_{\mathrm{eff}}(W)$, is defined as the ratio of the
+largest singular value to the smallest non-zero singular value of $W$:
+\begin{equation}
+    \kappa_{\mathrm{eff}}(W) = \frac{\sigma_{\max}(W)}{\sigma_{\min}^{+}(W)}
+\end{equation}
+where $\sigma_{\max}(W)$ is the maximum singular value, and $\sigma_{\min}^{+}(W)$ represents the smallest strictly positive singular value,
+ensuring numerical stability when evaluating sparse matrices where $W = \hat{W} \odot Z$.
+
+Feng et al. \cite{lipschitz_condition_number} examined the effect of sparsity on the condition number and the Lipschitz constant of the network to capture
+the resulting robustness of the sparse model. They note that highly pruned models tends to have a lower upper bound of the Lipschitz constant. However, sparse
+weight matrices are more likely to be ill-conditioned, which is signaled by a high condition number.
+
+By tracking these two metrics during the gradual pruning process, we can compare the effects of the aforementioned design decisions
+on the robustness of the resulting sparse model, besides the standard accuracy metric and the length of the process.
+
+
