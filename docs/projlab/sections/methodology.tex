@@ -34,7 +34,7 @@ lead to better performance than fine-tuning the pruned model from its current st
 restores the weights to checkpoint $\hat{W}$ after each pruning step, while also applying the newly discovered mask $Z$. Note that this rewinding step
 is one of the design choices whose benefits and drawback we evaluated during the experiments.
 
-\include{tables/algo}
+\input{tables/algo}
 
 
 \subsection{Scheduling $\epsilon$ and $\lambda$}
@@ -83,6 +83,7 @@ Let $f(x; W) \in \mathbb{R}^C$ denote the neural network's output logits for a g
 We define the expected smoothness metric, $\bar{\mathcal{J}}_{\mathrm{smooth}}$, as the average Frobenius norm of the input Jacobian across the dataset $\mathcal{D}_{\mathrm{train}}$:
 \begin{equation}
     \bar{\mathcal{J}}_{\mathrm{smooth}} = \mathbb{E}_{x \sim \mathcal{D}_{\mathrm{train}}} \left[ \left\| \frac{\partial f(x; W)}{\partial x} \right\|_F \right]
+\label{eq:jacobian_norm}
 \end{equation}
 
 A lower value of $\bar{\mathcal{J}}_{\mathrm{smooth}}$ implies a lower upper bound on the empirical Lipschitz constant, indicating that the network implements
@@ -94,6 +95,7 @@ Let $W$ be the weight matrix of a given layer. The effective condition number, d
 largest singular value to the smallest non-zero singular value of $W$:
 \begin{equation}
     \kappa_{\mathrm{eff}}(W) = \frac{\sigma_{\max}(W)}{\sigma_{\min}^{+}(W)}
+\label{eq:conditionnumber}
 \end{equation}
 where $\sigma_{\max}(W)$ is the maximum singular value, and $\sigma_{\min}^{+}(W)$ represents the smallest strictly positive singular value,
 ensuring numerical stability when evaluating sparse matrices where $W = \hat{W} \odot Z$.

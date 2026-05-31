@@ -24,8 +24,9 @@ To mitigate the vanishing gradient problem, the architecture includes residual c
 
 For gradual pruning, we applied a custom strategy presented in Section \ref{subsec:irl1}. The penalty update (Eq. \ref{eq:weight_update})
 was applied after every epoch, while the early stopping criterion in the regularization phase was applied with a tolerance $E$ of $0.5\%$
-and a patience of 25 epochs. 
-The global pruning threshold $\tau$ was set $1e-5$ which resulted in an average of $20\%$ increase in sparsity after each pruning step. 
+and a patience $m$ of 25 epochs. 
+The global pruning threshold $\tau$ was set $1e-5$ which resulted in an average of $20\%$ increase in sparsity after each pruning step. The 
+target sparsity was set to $90\%$.
 
 We examined four variations of the pruning process based on the design choices described in Chapter \ref{sec:method}. 
 The iterative decaying of $\epsilon$ and increasing of $\lambda$ - which is referred to as the \textit{smooth} method - was following a sigmoid function
@@ -41,13 +42,14 @@ The additional hyperparameters are listed in Table \ref{tab:training_params}.
 
 \subsection{Length of Pruning Process}
 
-To compare feasibility these four variations, we executed 15 runs of each variation with a different random seed and calculated metrics
+To compare the feasibility of these four variations, we executed 15 runs of each variation with a different random seed and calculated metrics
 related to the length of the pruning process. The sample mean and standard deviation of each metric are listed in Table \ref{tab:comp}. Each training
 was run until a target sparsity level of $90\%$ was reached. \textit{Total epochs} refers to the entire length of the process, while refitting and regularization lengths refer to the
 average number of epochs spent in Step 6 and Step 14 of Algorithm \ref{tab:pruning_algorithm}, respectively. \textit{Pruning steps} denote the average number of updating 
 the binary mask $Z$ in Step 12. At the end of the process, the final model with sparsity just above the target sparsity is evaluated on the test set. This final actual sparsity and
 top-1 accuracy is reported in the last two columns. 
 
+\input{tables/comp.tex}
 
 By comparing the different length metrics across the smooth and discrete methods, we can see that the scheduling 
 of $\epsilon$ and $\lambda$ leads to significantly longer overall length. This is primarily because of the longer regularization phases, which indicates that the convergence of
@@ -55,14 +57,30 @@ the thresholded sparsity takes longer. This is also visualized in the training c
 does not achieve significantly higher test accuracies. More specifically, in the case of the no-rewind strategy, discrete method seems to be more effective in 
 maintaining accuracy, while the smooth methods performs better in the case of the rewind strategy.
 
-\include{tables/comp.tex}
 
 Regarding the difference caused by weight rewinding, we can observe that weight rewinding reduces the length of the refitting phase by more that $50\%$. 
 A bit contradicting to the common belief that weight rewinding leads to better performance, the no-rewind strategy achieves higher test accuracies in both cases of applying smooth 
 or discrete transition between the refitting and regularization phases. On the other hand, we may conclude that the benefit of reducing the length of
 the refitting phase by weight rewinding outweighs the ca. $2-5\%$ degradation in test accuracy.
 
+Examining the impact of applying the smooth transition, we may conclude that it does not yield considerable improvement in the test accuracy, 
+while it poses a significant computational overhead by increasing the length of the regularization phase. 
+As this contradicts with our initial assumption on the benefits of the smooth transition, further testing is required on different deep learning
+architectures to confirm and generalize this observation and find the underlying reasons of this behavior.
+
+
 \subsection{Sparsity-Accuracy Tradeoff}
+
+As discussed in Chapter \ref{sec:background}, pruning methods are generally compared based on the achieved tradeoff between model sparsity and accuracy.  
+We evaluated the four variations on the test set of CIFAR-10 after each refitting phase, which is the phase where the model is expected to
+recover its lost accuracy due to pruning. 
+
+The four sparsity-accuracy curves are shown in Figure \ref{fig:test_acc}. The sample mean and standard deviation of
+the top-1 accuracy was calculated across the 15 runs of each variation. Note that along the runs of the same variation, the 
+sparsity levels achieved after the pruning steps are not exactly the same due to the stochasticity of the training process. To calculate the statistics 
+across the corresponding checkpoints or iterations of the 15 runs, we applied a binning logic to the sparsity checkpoints of corresponding runs.
+Each bin had a width of $2\%$ sparsity and checkpoints which belonged to the same bin were grouped together. This nearest-bin mapping
+aligned checkpoints which were close in sparsity but not numerically identical.
 
 \begin{figure}[H]
     \includegraphics[width=0.8\linewidth]{figs/weightwise2.png}
@@ -71,14 +89,23 @@ the refitting phase by weight rewinding outweighs the ca. $2-5\%$ degradation in
     \label{fig:test_acc}
 \end{figure}
 
+At first, we can conclude that below a sparsity level of $50\%$, pruning with the weight rewinding achieved higher test accuracies than the initial dense model. Above $50\%$ sparsity,
+the accuracy of the pruned models starts to degrade. On the other hand, the no-rewind strategy seems to be more effective in maintaining accuracy at higher sparsity levels, although 
+it does so with a significantly higher variance. Regarding the effect of the smooth transition between the refitting and regularization phase, there is no observable difference 
+in their performance along the sparsity trajectory. This contradicts with our expectations that the smooth transition supports the optimization process to find a better tradeoff between
+a sparse architecture and a well-fitted model.
+
+Related to weight rewinding, it aligns with the expected behavior discussed in Section \ref{subsec:rewind} that weight rewinding leads to better performance.
+The reason why it looses its advantage at higher sparsity levels is \textit{UNKNOWN!!!!!!!!!!!!!!}.
 
 \subsection{Sparsity-Robustness Tradeoff}
 
 Besides the test accuracy across the pruning stages, we compared the different variations of the pruning process along metrics related to 
-model robustness. The definition of the average Jacobian Norm of a given model is presented in Equation \ref{eq:jacobian_norm} from the previous
-Chapter. To capture how pruning changes the smoothness of the model's input-output mapping, we evaluated the same 15 runs of
-each pruning variation during their training process and computed the this metric. Figure \ref{fig:jacobian_norm} shows how the average Jacobian norm
-changed across the sparsity levels. Note that models were evaluated after the refitting phase.
+model robustness. The definition of the average Jacobian norm of a given model is presented in Equation \ref{eq:jacobian_norm} from the previous
+chapter. To capture how pruning changes the smoothness of the model's input-output mapping, we evaluated the same 15 runs of
+each pruning variation during their training process and computed this metric. Figure \ref{fig:jacobian_norm} shows how the average Jacobian norm
+changed across the sparsity levels. Note that the same binning logic was applied here to facilitate a smoother curve and the calculation of the sample mean and standard deviation
+of this metric at a given sparsity level.
 
 \begin{figure}[H]
     \includegraphics[width=0.8\linewidth]{figs/norm2.png}
@@ -87,9 +114,39 @@ changed across the sparsity levels. Note that models were evaluated after the re
     \label{fig:jacobian_norm}
 \end{figure}
 
+The greatest difference in how the average Jacobian norm changes across the sparsity levels is between the rewind and no-rewind strategies. If remaining
+weights after the pruning step were left unchanged, the norm increased significantly at the first half of the pruning process, then it 
+oscillated around a higher value with a higher standard deviation. On the other hand, weight rewinding resulted in a more smooth input-output mapping
+of the re-fitted model.
+
+If we compare the impact of scheduling $\epsilon$ and $\lambda$, we cannot see a significant difference in the norm, although taking a discrete step
+when weight rewinding is not utilized seems to reduce the norm by a little margin, thus making the model more robust to local input perturbations.
+
+\textit{Explanation???}
+
+Apart from the smoothness of the implemented function, we also evaluated the effective condition number (Eq. \ref{eq:conditionnumber}) of specific layers
+of the ResNet20 architecture during the pruning process. 
+Figure \ref{fig:con} shows how this metric in Layer 10 weight matrix changes over the course of the pruning process.
+This layer was chosen because it is a middle ground between feature extractor and classification
+layers in terms of expected sparsity. As discussed in Section \ref{subsec:prune}, global thresholding allows to model to
+prune late classification layers more aggressively than early feature extractor layers. Additional plots of the
+progression of the effective condition number of other layers are included in the Appendix \ref{sec:appendix}.
+
+Note that the statistics were calculated using the previously explained binning logic across 15 runs of each variation. 
+
 \begin{figure}[H]
     \includegraphics[width=0.8\linewidth]{figs/condition10.png}
     \centering
-    \caption{OOD accuracy of pruned versions of ResNet20 on the CIFAR-10-C dataset.}
-    \label{fig:ood_acc}
+    \caption{Progression of the Effective Condition Number of Layer 10 during the four variations of the pruning process.}
+    \label{fig:condition}
 \end{figure}
+
+The figure clearly shows the drawback of leaving weight unchanged after the pruning step: as pruning continues to further steps,
+the sparse weight matrix becomes more and more ill-conditioned, thus magnifying the effect of small perturbations in some
+input dimensions. On the other hand, weight rewinding is effective in mitigating this effect by restoring the remaining weights to
+a well-conditioned state from the dense model.
+
+Regarding the difference between the smooth and discrete transition variants, we cannot conclude that applying a smooth transition 
+influences the ability of the gradual pruning strategy to maintain the low condition number of weight matrices.  
+
+
